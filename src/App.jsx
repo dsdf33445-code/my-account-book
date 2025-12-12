@@ -47,8 +47,9 @@ const firebaseConfig = {
 };
 
 // --- 2. 初始化 Firebase (關鍵步驟：定義 auth) ---
+// 這裡就是您原本遺失的部分，我已補上
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app); // 這裡定義了 auth，確保它存在
+const auth = getAuth(app); 
 const db = getFirestore(app);
 const appId = "my-account-book-v1"; // 固定 App ID，確保資料路徑穩定
 
@@ -194,7 +195,7 @@ export default function App() {
 
   // --- Auth & Init (Simplified) ---
   useEffect(() => {
-    // 直接使用匿名登入
+    // 直接使用匿名登入，移除複雜的沙盒 Token 判斷
     signInAnonymously(auth).catch(err => console.error("Login Failed:", err));
     return onAuthStateChanged(auth, setUser);
   }, []);
@@ -305,18 +306,13 @@ export default function App() {
   };
 
   const CompanyView = () => {
-    // 1. Calculate All-time Totals for Capital
-    // Logic: Asset only increases by Surplus (8% - fee). If surplus is undefined (legacy), use netAmount.
     const allTimeAssetGain = companyTx.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.surplus !== undefined ? t.surplus : t.netAmount) || 0), 0);
     const allTimeExpense = companyTx.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
     const currentAssets = COMPANY_CAPITAL + allTimeAssetGain - allTimeExpense;
 
-    // 2. Filter by Month
     const filteredTx = companyTx.filter(tx => tx.date.startsWith(selectedMonth));
     
-    // Monthly stats for display
     const monthlyRevenue = filteredTx.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.rawAmount || t.netAmount) || 0), 0);
-    // Adjusted monthlyAssetGain logic to use surplus
     const monthlyAssetGain = filteredTx.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.surplus !== undefined ? t.surplus : t.netAmount) || 0), 0);
     const monthlyExpense = filteredTx.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
@@ -324,7 +320,6 @@ export default function App() {
       const targetTx = filteredTx.filter(t => t.type === companySubTab);
       const categoryMap = {};
       targetTx.forEach(tx => {
-        // Chart uses Raw amount for income breakdown to see where money comes from
         const amt = companySubTab === 'income' ? (tx.rawAmount || tx.netAmount) : tx.amount;
         categoryMap[tx.item] = (categoryMap[tx.item] || 0) + Number(amt);
       });
