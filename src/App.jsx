@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import './index.css';
+import { User } from 'lucide-react'; // 加入 User icon
+import ProfileView from './components/views/ProfileView'; // 引入新頁面
 import { 
   getAuth, 
   signInAnonymously, 
@@ -168,7 +170,12 @@ export default function App() {
   };
 
   const BottomNav = () => {
-    const navItems = [{ id: 'calendar', icon: CalendarIcon, label: '行事曆' }, { id: 'company', icon: Briefcase, label: '公司' }, { id: 'daily', icon: Wallet, label: '日常' }, { id: 'todo', icon: CheckSquare, label: '待辦' }];
+    const navItems = [{ id: 'calendar', icon: CalendarIcon, label: '行事曆' }, 
+		      { id: 'company', icon: Briefcase, label: '公司' }, 
+		      { id: 'daily', icon: Wallet, label: '日常' }, 
+		      { id: 'todo', icon: CheckSquare, label: '待辦' },
+		      { id: 'profile', icon: User, label: '我的' }
+		     ];
     return (
       <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-stone-100 pb-safe pt-2 px-6 z-40 rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
          <div className="flex justify-between items-center max-w-md mx-auto h-16">{navItems.map(item => { const isActive = activeTab === item.id; return (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-col items-center gap-1 transition-all duration-300 ${isActive ? 'text-emerald-600 -translate-y-2' : 'text-stone-400 hover:text-stone-600'}`}><div className={`p-2 rounded-2xl transition-all ${isActive ? 'bg-emerald-100 shadow-sm' : 'bg-transparent'}`}><item.icon size={24} strokeWidth={isActive ? 2.5 : 2} /></div><span className={`text-[10px] font-bold ${isActive ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>{item.label}</span></button>) })}</div>
@@ -234,7 +241,12 @@ export default function App() {
                 onDeleteClick={triggerDelete}
               />
             )}
-          </main>
+
+	    {activeTab === 'profile' && (
+             <ProfileView user={user} />
+            )}
+
+	</main>
           
           <ModalForm 
             isOpen={isModalOpen}

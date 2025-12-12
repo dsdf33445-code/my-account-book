@@ -1,14 +1,13 @@
-// src/components/ModalForm.jsx
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { X } from 'lucide-react';
-import { ActionButton, Card, Input, Select } from './UI'; // 引用 UI 元件
+import { ActionButton, Card, Input, Select } from './UI';
 import { 
   INCOME_CATEGORIES, 
   EXPENSE_CATEGORIES, 
   DAILY_CATEGORIES, 
   FIXED_EXPENSE_DEFAULTS 
-} from '../constants'; // 引用常數
+} from '../constants';
 
 export default function ModalForm({ isOpen, onClose, type, editingItem, db, appId }) {
   if (!isOpen) return null;
@@ -18,22 +17,36 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
   const [amount, setAmount] = useState('');
   const [item, setItem] = useState('');
   const [category, setCategory] = useState('');
+  
+  // 新增狀態
+  const [kolSalary, setKolSalary] = useState(''); // KOL 薪資
+  const [invoiceNote, setInvoiceNote] = useState(''); // 發票費備註
+  
   const [fixedItems, setFixedItems] = useState(FIXED_EXPENSE_DEFAULTS.map(i => ({...i, value: ''})));
   const [isNonCathay, setIsNonCathay] = useState(false);
   const [time, setTime] = useState('12:00');
   const [location, setLocation] = useState('');
   const [todoType, setTodoType] = useState('待辦事項');
 
-  // 初始化邏輯 (當 Modal 開啟或 editingItem 改變時執行)
+  // 初始化邏輯
   useEffect(() => {
     if (editingItem) {
       setDate(editingItem.date || today);
       if (type === 'income') {
          setAmount(editingItem.rawAmount);
-         setItem(editingItem.item);
+         // 判斷是否為特殊類別以回填資料
+         if (editingItem.category === 'KOL行銷費' || editingItem.item.includes('(KOL)')) {
+            setCategory('KOL行銷費');
+            setItem(editingItem.item.replace(' (KOL)', '')); // 移除識別後綴顯示
+            setKolSalary(editingItem.kolSalary || '');
+         } else if (editingItem.item.startsWith('發票費')) {
+            setCategory('發票費');
+            setInvoiceNote(editingItem.item.replace('發票費: ', '').replace('發票費', ''));
+         } else {
+            setCategory(INCOME_CATEGORIES.includes(editingItem.item) ? editingItem.item : '其他');
+            setItem(editingItem.item);
+         }
          setIsNonCathay(editingItem.fee > 0);
-         setCategory(INCOME_CATEGORIES.includes(editingItem.item) ? editingItem.item : '其他');
-         if (!INCOME_CATEGORIES.includes(editingItem.item)) setItem(editingItem.item);
       } else if (type === 'expense' || type === 'daily') {
          setAmount(editingItem.amount);
          setItem(editingItem.item);
@@ -53,6 +66,8 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       setDate(today);
       setAmount('');
       setItem('');
+      setKolSalary(''); // 重置
+      setInvoiceNote(''); // 重置
       setTime('12:00');
       setLocation('');
       setIsNonCathay(false);
@@ -81,13 +96,61 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
 
       if (type === 'income') {
         const numAmount = Number(amount);
-        const tax = Math.round(numAmount * 0.05);
-        const baseSurplus = Math.round(numAmount * 0.08);
-        const fee = isNonCathay ? 15 : 0;
-        const surplus = baseSurplus - fee;
-        const net = numAmount - tax - baseSurplus;
         
-        docData = { date, item: category === '其他' ? item : category,HVrawAmount: numAmount, tax, surplus, fee, netAmount: net, type: 'income', ...commonData };
+        if (category === 'KOL行銷費') {
+            // 邏輯 1: KOL 行銷費 (維持 30%)
+            const tax = Math.round(numAmount - (numAmount / 1.05));
+            const numKolSalary = Number(kolSalary);
+            
+            const baseForSurplus = numAmount - tax - numKolSalary;
+            const surplus = Math.round(baseForSurplus * 0.3); // 30%
+            
+            const net = numAmount - tax - numKolSalary - surplus;
+
+            docData = { 
+                date, 
+                item: item, 
+                category: 'KOL行銷費', 
+                rawAmount: numAmount, 
+                tax, 
+                kolSalary: numKolSalary,
+                surplus, 
+                fee: 0, 
+                netAmount: net, 
+                type: 'income', 
+                ...commonData 
+            };
+
+        } else {
+            // 邏輯 2: 一般收入 (修改為 30%)
+            const tax = Math.round(numAmount * 0.05);
+            
+            // 修改重點：這裡從 0.08 改為 0.30
+            const baseSurplus = Math.round(numAmount * 0.30); 
+            
+            const fee = isNonCathay ? 15 : 0;
+            const surplus = baseSurplus - fee;
+            const net = numAmount - tax - baseSurplus; // 這裡減去的是含手續費前的盈餘總額(因為盈餘是被公司拿走)
+            
+            let finalItemName = item;
+            if (category === '其他') finalItemName = item;
+            else if (category === '發票費') finalItemName = invoiceNote ? `發票費: ${invoiceNote}` : '發票費';
+            else finalItemName = category;
+
+            docData = { 
+                date, 
+                item: finalItemName, 
+                category: category,
+                rawAmount: numAmount, 
+                tax, 
+                surplus, 
+                fee, 
+                netAmount: net, 
+                type: 'income', 
+                ...commonData 
+            };
+        }
+
       } else if (type === 'expense') {
         docData = { date, item: category === '其他' ? item : category, amount: Number(amount), type: 'expense', ...commonData };
       } else if (type === 'daily') {
@@ -112,6 +175,59 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
     } catch (err) { alert("儲存失敗: " + err.message); }
   };
 
+  // 預覽計算
+  const renderIncomePreview = () => {
+      const numAmount = Number(amount) || 0;
+      
+      if (category === 'KOL行銷費') {
+          const tax = Math.round(numAmount - (numAmount / 1.05));
+          const numKolSalary = Number(kolSalary) || 0;
+          const baseForSurplus = numAmount - tax - numKolSalary;
+          const surplus = Math.round(baseForSurplus * 0.3);
+          const net = numAmount - tax - numKolSalary - surplus;
+
+          return (
+            <div className="bg-stone-50 p-3 rounded-xl mb-4 text-sm text-stone-600 space-y-2 border border-stone-100">
+                <div className="flex justify-between items-center text-stone-400 text-xs"><span>計算公式: (總額-稅-薪資)*30% = 盈餘</span></div>
+                <div className="flex justify-between items-center"><span>稅金 (5%)</span><span className="font-bold text-rose-500">-${tax}</span></div>
+                <div className="flex justify-between items-center"><span>KOL 薪資</span><span className="font-bold text-rose-500">-${numKolSalary}</span></div>
+                <div className="flex justify-between items-center">
+                    <span>公司盈餘 (30%)</span>
+                    <span className="font-bold text-emerald-600">-${surplus}</span>
+                </div>
+                <div className="border-t border-stone-200 pt-2 flex justify-between font-bold text-stone-800">
+                    <span>實拿金額 (入日常)</span>
+                    <span>${net}</span>
+                </div>
+            </div>
+          );
+      } else {
+          // 一般收入預覽 (修改為 30%)
+          const tax = Math.round(numAmount * 0.05);
+          const baseSurplus = Math.round(numAmount * 0.30); // 30%
+          const fee = isNonCathay ? 15 : 0;
+          const net = numAmount - tax - baseSurplus;
+
+          return (
+            <div className="bg-stone-50 p-3 rounded-xl mb-4 text-sm text-stone-600 space-y-2 border border-stone-100">
+                <div className="flex justify-between items-center"><span>預扣 5% 稅金</span><span className="font-bold text-rose-500">-${tax}</span></div>
+                <div className="flex justify-between items-center">
+                    {/* 更新顯示文字 */}
+                    <span>公司盈餘 (30% {isNonCathay ? '- 手續費' : ''})</span>
+                    <span className="font-bold text-emerald-600">
+                        -${baseSurplus - fee}
+                    </span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isNonCathay} onChange={e => setIsNonCathay(e.target.checked)} className="accent-emerald-600 w-4 h-4"/><span>非國泰轉帳 (手續費 $15)</span></label>
+                <div className="border-t border-stone-200 pt-2 flex justify-between font-bold text-stone-800">
+                    <span>實拿金額 (入日常)</span>
+                    <span>${net}</span>
+                </div>
+            </div>
+          );
+      }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={onClose}></div>
@@ -126,32 +242,35 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
          </h3>
          <form onSubmit={handleSubmit}>
             {['income', 'expense', 'daily', 'event', 'daily_fixed'].includes(type) && <Input type="date" value={date} onChange={e => setDate(e.target.value)} label="日期" required />}
+            
             {type === 'daily_fixed' && !editingItem && <div className="space-y-3 mb-4"><p className="text-xs text-stone-500 mb-2">請輸入本月金額 (填寫項目將自動加入)</p>{fixedItems.map((fi, idx) => (<div key={fi.label} className="flex items-center gap-2"><label className="text-sm font-bold text-stone-600 w-20">{fi.label}</label><input type="number" placeholder="0" value={fi.value} onChange={(e) => handleFixedChange(idx, e.target.value)} className="flex-1 bg-stone-50 border border-stone-200 rounded-lg p-2 text-stone-700 outline-none focus:border-emerald-300 text-right no-spinner" /></div>))}</div>}
+            
             {type === 'event' && <Input type="time" value={time} onChange={e => setTime(e.target.value)} label="時間" required />}
+            
             {type === 'income' && <Select value={category} onChange={e => setCategory(e.target.value)} options={INCOME_CATEGORIES} label="項目分類" />}
             {type === 'expense' && <Select value={category} onChange={e => setCategory(e.target.value)} options={EXPENSE_CATEGORIES} label="項目分類" />}
             {type === 'daily' && <Select value={category} onChange={e => setCategory(e.target.value)} options={DAILY_CATEGORIES} label="項目分類" />}
             {type === 'todo' && <Select value={todoType} onChange={e => setTodoType(e.target.value)} options={['待辦事項', '購物清單']} label="類型" />}
-            {(type === 'todo' || type === 'event' || (category === '其他' && type !== 'daily_fixed')) && <Input value={item} onChange={e => setItem(e.target.value)} placeholder={type === 'event' ? "行程名稱" : "輸入名稱..."} label="名稱" required />}
-            {type === 'event' && <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="地點" label="地點" />}
-            {['income', 'expense', 'daily'].includes(type) && <Input type="number" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" label="金額" required className="no-spinner" />}
             
-            {type === 'income' && (
-               <div className="bg-stone-50 p-3 rounded-xl mb-4 text-sm text-stone-600 space-y-2 border border-stone-100">
-                  <div className="flex justify-between items-center"><span>預扣 5% 稅金</span><span className="font-bold text-rose-500">-${Math.round((Number(amount) || 0) * 0.05)}</span></div>
-                  <div className="flex justify-between items-center">
-                      <span>公司盈餘 (8% {isNonCathay ? '- 手續費' : ''})</span>
-                      <span className="font-bold text-emerald-600">
-                          -${Math.round((Number(amount) || 0) * 0.08) - (isNonCathay ? 15 : 0)}
-                      </span>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isNonCathay} onChange={e => setIsNonCathay(e.target.checked)} className="accent-emerald-600 w-4 h-4"/><span>非國泰轉帳 (手續費 $15, 由盈餘扣除)</span></label>
-                  <div className="border-t border-stone-200 pt-2 flex justify-between font-bold text-stone-800">
-                    <span>實拿金額 (入日常)</span>
-                    <span>${(Number(amount) || 0) - Math.round((Number(amount) || 0) * 0.05) - Math.round((Number(amount) || 0) * 0.08)}</span>
-                  </div>
-               </div>
+            {(type === 'todo' || type === 'event' || (type === 'income' && category === '其他') || (type === 'income' && category === 'KOL行銷費') || (type === 'daily' && category === '其他') || (type === 'expense' && category === '其他')) && (
+                <Input value={item} onChange={e => setItem(e.target.value)} placeholder={type === 'event' ? "行程名稱" : "輸入名稱..."} label="名稱" required />
             )}
+
+            {type === 'income' && category === '發票費' && (
+                <Input value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} placeholder="例如: 廠商名稱、發票號碼..." label="發票備註" />
+            )}
+
+            {type === 'event' && <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="地點" label="地點" />}
+            
+            {['income', 'expense', 'daily'].includes(type) && (
+                <Input type="number" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" label={category === 'KOL行銷費' ? "行銷費總金額 (含稅)" : "金額"} required className="no-spinner" />
+            )}
+
+            {type === 'income' && category === 'KOL行銷費' && (
+                <Input type="number" inputMode="numeric" value={kolSalary} onChange={e => setKolSalary(e.target.value)} placeholder="0" label="KOL 薪資" required className="no-spinner" />
+            )}
+            
+            {type === 'income' && renderIncomePreview()}
 
             <ActionButton type="submit" className="w-full mt-2">{type === 'daily_fixed' && !editingItem ? '一鍵加入' : (editingItem ? '確認修改' : '確認新增')}</ActionButton>
          </form>
