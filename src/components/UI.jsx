@@ -1,8 +1,7 @@
-// src/components/UI.jsx
 import React from 'react';
-import { CHART_COLORS } from '../constants'; // 引用剛建立的常數
+import { CHART_COLORS } from '../constants';
 
-export const ActionButton = ({ onClick,HVchildren, className = "", variant = "primary", type = "button" }) => {
+export const ActionButton = ({ onClick, children, className = "", variant = "primary", type = "button" }) => {
   const baseStyle = "transition-all active:scale-95 font-bold py-3 px-6 rounded-2xl shadow-sm flex items-center justify-center gap-2";
   const variants = {
     primary: "bg-emerald-600 text-white shadow-emerald-200 hover:bg-emerald-700",
@@ -47,7 +46,7 @@ export const Select = ({ label, options, ...props }) => (
   </div>
 );
 
-export const DonutChart = ({cF data }) => {
+export const DonutChart = ({ data }) => {
   if (!data || data.length === 0) return <div className="text-center text-stone-300 py-4">無數據可分析</div>;
   const total = data.reduce((acc, cur) => acc + cur.value, 0);
   let cumulativePercent = 0;
