@@ -3,8 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
-  onAuthStateChanged,
-  signInWithCustomToken
+  onAuthStateChanged
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -18,7 +17,6 @@ import {
   doc,
   serverTimestamp
 } from 'firebase/firestore';
-// Removed storage imports as they were only used for member avatars
 import { 
   Briefcase, 
   Wallet, 
@@ -37,7 +35,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 
-// --- Firebase Configuration & Initialization ---
+// --- 1. Firebase 設定 (已填入您的資訊) ---
 const firebaseConfig = {
   apiKey: "AIzaSyBuP0ldQRjl-NZbJH3t8dnPJrPkfuUB7GQ",
   authDomain: "my-account-book-ee9f4.firebaseapp.com",
@@ -47,6 +45,12 @@ const firebaseConfig = {
   appId: "1:175280379344:web:f207facd3e94d9ee0915d5",
   measurementId: "G-6C9M4J5N7V"
 };
+
+// --- 2. 初始化 Firebase (關鍵步驟：定義 auth) ---
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app); // 這裡定義了 auth，確保它存在
+const db = getFirestore(app);
+const appId = "my-account-book-v1"; // 固定 App ID，確保資料路徑穩定
 
 // --- Constants & Types ---
 const COMPANY_CAPITAL = 500000;
@@ -172,14 +176,13 @@ export default function App() {
   const [dailyTx, setDailyTx] = useState([]);
   const [todos, setTodos] = useState([]);
   const [events, setEvents] = useState([]);
-  // Removed members state
   
   // UI States
-  const [todoFilter, setTodoFilter] = useState('待辦事項'); // Default updated
+  const [todoFilter, setTodoFilter] = useState('待辦事項');
   const [companySubTab, setCompanySubTab] = useState('income');
   const [showCompanyChart, setShowCompanyChart] = useState(false);
   const [showDailyChart, setShowDailyChart] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
 
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -189,16 +192,10 @@ export default function App() {
   // Confirm Modal State
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
 
-  // --- Auth & Init ---
+  // --- Auth & Init (Simplified) ---
   useEffect(() => {
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-    };
-    initAuth();
+    // 直接使用匿名登入
+    signInAnonymously(auth).catch(err => console.error("Login Failed:", err));
     return onAuthStateChanged(auth, setUser);
   }, []);
 
@@ -206,11 +203,28 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const getPublicCollection = (name) => collection(db, 'artifacts', appId, 'public', 'data', name);
-    const unsubCompany = onSnapshot(query(getPublicCollection('company_tx'), orderBy('date', 'desc')), s => setCompanyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubDaily = onSnapshot(query(getPublicCollection('daily_tx'), orderBy('date', 'desc')), s => setDailyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubTodos = onSnapshot(query(getPublicCollection('todos'), orderBy('createdAt', 'desc')), s => setTodos(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const unsubEvents = onSnapshot(query(getPublicCollection('events'), orderBy('date', 'asc')), s => setEvents(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-    // Removed members listener
+    
+    // Error handling added to listeners
+    const unsubCompany = onSnapshot(query(getPublicCollection('company_tx'), orderBy('date', 'desc')), 
+      s => setCompanyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.error("Company Sync Error:", e)
+    );
+    
+    const unsubDaily = onSnapshot(query(getPublicCollection('daily_tx'), orderBy('date', 'desc')), 
+      s => setDailyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.error("Daily Sync Error:", e)
+    );
+    
+    const unsubTodos = onSnapshot(query(getPublicCollection('todos'), orderBy('createdAt', 'desc')), 
+      s => setTodos(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.error("Todos Sync Error:", e)
+    );
+    
+    const unsubEvents = onSnapshot(query(getPublicCollection('events'), orderBy('date', 'asc')), 
+      s => setEvents(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.error("Events Sync Error:", e)
+    );
+
     return () => { unsubCompany(); unsubDaily(); unsubTodos(); unsubEvents(); };
   }, [user]);
 
@@ -359,7 +373,6 @@ export default function App() {
                     <div><div className="font-bold text-stone-700">{tx.item}</div><div className="text-xs text-stone-400">{tx.date}</div></div>
                   </div>
                   <div className="text-right">
-                    {/* Display Amount: For Income, show Raw (Revenue) and Surplus (Asset Gain) */}
                     <div className={`font-bold ${companySubTab === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {companySubTab === 'income' ? '+' : '-'}${Number(companySubTab === 'income' ? (tx.rawAmount || tx.netAmount) : tx.amount).toLocaleString()}
                     </div>
@@ -384,18 +397,14 @@ export default function App() {
   };
 
   const DailyView = () => {
-    // 1. Get Expenses
     const monthlyExpenses = dailyTx.filter(tx => tx.date.startsWith(selectedMonth));
     const totalExpense = monthlyExpenses.reduce((sum, t) => sum + Number(t.amount), 0);
 
-    // 2. Get Income from Company (Net Amount from Company Incomes)
-    // Filter company tx for this month AND type=income
     const monthlyIncomes = companyTx.filter(tx => tx.type === 'income' && tx.date.startsWith(selectedMonth));
     const totalIncome = monthlyIncomes.reduce((sum, t) => sum + Number(t.netAmount || 0), 0);
 
     const balance = totalIncome - totalExpense;
     
-    // Combine for List View
     const combinedList = [
       ...monthlyExpenses.map(t => ({ ...t, isIncome: false })),
       ...monthlyIncomes.map(t => ({ ...t, isIncome: true, amount: t.netAmount, item: `分潤: ${t.item}` }))
@@ -419,7 +428,6 @@ export default function App() {
            />
         </div>
 
-         {/* Stats Card */}
          <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-stone-100 grid grid-cols-3 divide-x divide-stone-100">
             <div className="px-2 text-center">
               <div className="text-xs text-stone-400 mb-1">本月收入</div>
@@ -459,7 +467,6 @@ export default function App() {
                         {tx.isIncome ? '+' : '-'}${Number(tx.amount).toLocaleString()}
                       </div>
                       <div className="flex justify-end gap-1 mt-1">
-                        {/* Only allow edit/delete for expenses here, income is managed in company view */}
                         {!tx.isIncome && (
                           <>
                             <button type="button" onClick={() => triggerEdit(tx, 'daily')} className="text-stone-300 hover:text-emerald-500 text-xs p-1"><Pencil size={14}/></button>
@@ -538,7 +545,7 @@ export default function App() {
     const [isNonCathay, setIsNonCathay] = useState(false);
     const [time, setTime] = useState('12:00');
     const [location, setLocation] = useState('');
-    const [todoType, setTodoType] = useState('待辦事項'); // Default updated
+    const [todoType, setTodoType] = useState('待辦事項');
 
     useEffect(() => {
       if (editingItem) {
@@ -573,7 +580,7 @@ export default function App() {
         if (modalType === 'daily' || modalType === 'daily_fixed') setCategory(DAILY_CATEGORIES[0]);
         else if (modalType === 'expense') setCategory(EXPENSE_CATEGORIES[0]);
         else if (modalType === 'income') setCategory(INCOME_CATEGORIES[0]);
-        else if (modalType === 'todo') setTodoType('待辦事項'); // Ensure reset
+        else if (modalType === 'todo') setTodoType('待辦事項');
       }
     }, [editingItem, modalType, isModalOpen]);
 
@@ -589,12 +596,10 @@ export default function App() {
         if (modalType === 'income') {
           const numAmount = Number(amount);
           const tax = Math.round(numAmount * 0.05);
-          const baseSurplus = Math.round(numAmount * 0.08); // 8% Base Surplus
+          const baseSurplus = Math.round(numAmount * 0.08);
           const fee = isNonCathay ? 15 : 0;
-          
-          // Logic Change: Fee deducted from surplus instead of net amount
           const surplus = baseSurplus - fee;
-          const net = numAmount - tax - baseSurplus; // Net is Raw - Tax - Base Surplus
+          const net = numAmount - tax - baseSurplus;
           
           docData = { date, item: category === '其他' ? item : category, rawAmount: numAmount, tax, surplus, fee, netAmount: net, type: 'income', ...commonData };
         } else if (modalType === 'expense') {
@@ -645,23 +650,18 @@ export default function App() {
               {modalType === 'event' && <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="地點" label="地點" />}
               {['income', 'expense', 'daily'].includes(modalType) && <Input type="number" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" label="金額" required className="no-spinner" />}
               
-              {/* Income Logic Display Update */}
               {modalType === 'income' && (
                  <div className="bg-stone-50 p-3 rounded-xl mb-4 text-sm text-stone-600 space-y-2 border border-stone-100">
                     <div className="flex justify-between items-center"><span>預扣 5% 稅金</span><span className="font-bold text-rose-500">-${Math.round((Number(amount) || 0) * 0.05)}</span></div>
-                    
-                    {/* Surplus Breakdown */}
                     <div className="flex justify-between items-center">
                         <span>公司盈餘 (8% {isNonCathay ? '- 手續費' : ''})</span>
                         <span className="font-bold text-emerald-600">
                             -${Math.round((Number(amount) || 0) * 0.08) - (isNonCathay ? 15 : 0)}
                         </span>
                     </div>
-
                     <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isNonCathay} onChange={e => setIsNonCathay(e.target.checked)} className="accent-emerald-600 w-4 h-4"/><span>非國泰轉帳 (手續費 $15, 由盈餘扣除)</span></label>
                     <div className="border-t border-stone-200 pt-2 flex justify-between font-bold text-stone-800">
                       <span>實拿金額 (入日常)</span>
-                      {/* Net Amount = Raw - Tax - Base Surplus (Fee is paid by surplus) */}
                       <span>${(Number(amount) || 0) - Math.round((Number(amount) || 0) * 0.05) - Math.round((Number(amount) || 0) * 0.08)}</span>
                     </div>
                  </div>
@@ -675,7 +675,6 @@ export default function App() {
   };
 
   const BottomNav = () => {
-    // Removed Members nav item
     const navItems = [{ id: 'calendar', icon: CalendarIcon, label: '行事曆' }, { id: 'company', icon: Briefcase, label: '公司' }, { id: 'daily', icon: Wallet, label: '日常' }, { id: 'todo', icon: CheckSquare, label: '待辦' }];
     return (
       <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-stone-100 pb-safe pt-2 px-6 z-40 rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
