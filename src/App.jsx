@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
+import './index.css'
 import { 
   getAuth, 
   signInAnonymously, 
