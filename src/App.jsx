@@ -212,6 +212,8 @@ export default function App() {
                 onAddClick={() => openModal(companySubTab)}
                 onEditClick={triggerEdit}
                 onDeleteClick={triggerDelete}
+		db={db}
+                appId={appId}
               />
             )}
 
