@@ -37,7 +37,7 @@ const CompanyView = memo(function CompanyView({
     // 總支出 (Expense)
     const totalExpense = companyTx
       .filter(t => t.type === 'expense')
-      .reduce((sum, t => sum + (Number(t.amount) || 0), 0);
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
     // 總結算盈餘 (Settled Surplus) - 這是已經從公司資產撥出去的錢
     const totalSettledSurplus = companyTx
