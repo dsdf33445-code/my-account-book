@@ -22,43 +22,66 @@ const CompanyView = memo(function CompanyView({
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // 防呆：檢查該月份是否已結算
+  // --- 計算歷史年度盈虧 (新的核心計算) ---
+  const { allTimeNetProfit, allTimeExpense } = useMemo(() => {
+    // 總收入 (Raw Income)
+    const totalIncome = companyTx
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+    // 總稅金 (Tax)
+    const totalTax = companyTx
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
+
+    // 總支出 (Expense)
+    const totalExpense = companyTx
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t => sum + (Number(t.amount) || 0), 0);
+
+    // 總結算盈餘 (Settled Surplus) - 這是已經從公司資產撥出去的錢
+    const totalSettledSurplus = companyTx
+      .filter(t => t.type === 'settlement')
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+      
+    // 年度累計淨利 = 總收入 - 總稅金 - 總支出 - 總結算盈餘
+    // 這裡的邏輯是追蹤「目前總結算前」的盈餘狀態
+    const netProfitBeforeSettlement = totalIncome - totalTax - totalExpense;
+
+    // 年度累計盈虧 (考慮已分配的錢)
+    const allTimeNetProfit = netProfitBeforeSettlement - totalSettledSurplus;
+    
+    return { allTimeNetProfit, allTimeExpense: totalExpense };
+  }, [companyTx]);
+  
+  // 計算總資產
+  const currentAssets = useMemo(() => {
+    // 總資產 = 資本額 + (總收入 - 總稅金 - 總支出) + (所有 settlement 盈餘)
+    // 簡化：資本額 + 歷史總淨利 (allTimeNetProfit)
+    return COMPANY_CAPITAL + allTimeNetProfit;
+  }, [allTimeNetProfit]);
+
+
+  // 防呆：檢查該月份是否已結算 (維持原本的 selectedMonth 判斷)
   const isSettled = useMemo(() => {
-    return companyTx.some(tx => 
+    return filteredTx.some(tx => 
       tx.type === 'settlement' && 
-      (tx.item.includes(`${selectedMonth} 盈餘結算`) || tx.date.startsWith(selectedMonth))
+      (tx.item.includes(`${selectedMonth} 盈餘結算`))
     );
   }, [companyTx, selectedMonth]);
 
-  // 計算總資產
-  const currentAssets = useMemo(() => {
-    const allTimeAssetGain = companyTx
-      .filter(t => t.type === 'income' || t.type === 'settlement') 
-      .reduce((sum, t) => {
-        if (t.surplus !== undefined) return sum + Number(t.surplus);
-        if (t.type === 'settlement') return sum + Number(t.amount);
-        return sum;
-      }, 0);
-      
-    const allTimeExpense = companyTx
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-      
-    return COMPANY_CAPITAL + allTimeAssetGain - allTimeExpense;
-  }, [companyTx]);
 
   // 篩選本月資料
   const filteredTx = useMemo(() => {
     return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
   }, [companyTx, selectedMonth]);
   
-  // 計算本月營收、支出、稅金、淨利 (修正此處)
+  // 計算本月營收、支出、稅金、淨利
   const { monthlyRevenue, monthlyTax, monthlyExpense, netProfit } = useMemo(() => {
     const revenue = filteredTx
       .filter(t => t.type === 'income')
       .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
       
-    // 🆕 計算本月稅金總額
     const tax = filteredTx
       .filter(t => t.type === 'income')
       .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
@@ -67,7 +90,6 @@ const CompanyView = memo(function CompanyView({
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
       
-    // 淨利 = 收入 - 稅金 - 支出
     return { 
         monthlyRevenue: revenue, 
         monthlyTax: tax,
@@ -75,32 +97,91 @@ const CompanyView = memo(function CompanyView({
         netProfit: revenue - tax - expense
     };
   }, [filteredTx]);
+  
+  // 🆕 判斷結算類型與分配金額
+  const settlementDetails = useMemo(() => {
+    const historicalLoss = allTimeNetProfit < 0 ? Math.abs(allTimeNetProfit) : 0;
+    const monthlyNet = netProfit;
+    
+    if (monthlyNet <= 0) {
+        return { type: 'NoProfit', companyShare: 0, dailyShare: 0, requiredToCover: 0 };
+    }
+    
+    // 情境 A: 優先填補歷史虧損
+    if (historicalLoss > 0) {
+        const amountToCover = Math.min(monthlyNet, historicalLoss); // 本月淨利能補多少
+        const remainingProfit = monthlyNet - amountToCover; // 補完後剩下的錢
+        
+        if (remainingProfit > 0) {
+            // 補完了還有剩，剩下的進行 30/70 分配
+            const companyShare = Math.round(remainingProfit * 0.3);
+            const dailyShare = remainingProfit - companyShare;
+            return { 
+                type: 'CoverAndDistribute', 
+                companyShare, 
+                dailyShare, 
+                requiredToCover: historicalLoss, 
+                coveredAmount: amountToCover 
+            };
+        } else {
+            // 剛好全部用來補虧損
+            return { 
+                type: 'CoverLossOnly', 
+                companyShare: 0, 
+                dailyShare: 0, 
+                requiredToCover: historicalLoss, 
+                coveredAmount: amountToCover 
+            };
+        }
+    }
+    
+    // 情境 B: 沒有虧損，直接 30/70 分配
+    const companyShare = Math.round(monthlyNet * 0.3);
+    const dailyShare = monthlyNet - companyShare;
+    return { type: 'DistributeOnly', companyShare, dailyShare, requiredToCover: 0, coveredAmount: 0 };
+
+  }, [allTimeNetProfit, netProfit]);
+
 
   // 執行結算寫入
   const handleConfirmSettle = async () => {
     setIsProcessing(true);
     try {
-        const companyShare = Math.round(netProfit * 0.3);
-        const dailyShare = netProfit - companyShare; 
+        const { type, companyShare, dailyShare, coveredAmount } = settlementDetails;
+        let settlementAmount = companyShare; // 公司資產實際增加的錢
 
-        // 1. 寫入公司盈餘記錄
+        // 如果是回填虧損模式，公司資產實際增加的是回填的總額，但日常分潤為 0
+        if (type === 'CoverLossOnly') {
+            settlementAmount = coveredAmount;
+        } 
+        
+        if (type === 'CoverAndDistribute') {
+             // 補虧損的錢(coveredAmount) + 分配給公司的錢(companyShare)
+             settlementAmount = coveredAmount + companyShare;
+        }
+
+        // 1. 寫入公司盈餘記錄 (記錄總回填/分配金額)
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'company_tx'), {
             date: new Date().toISOString().split('T')[0],
             item: `${selectedMonth} 盈餘結算`,
-            amount: companyShare,
+            amount: settlementAmount, // 結算單記錄撥入公司的總金額
             type: 'settlement',
             category: '結算',
+            description: type, // 紀錄本次結算的類型
             createdAt: serverTimestamp()
         });
+        
+        // 2. 寫入日常收入記錄 (只有在有實際分潤給日常時才寫入)
+        if (dailyShare > 0) {
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
+                date: new Date().toISOString().split('T')[0],
+                item: `${selectedMonth} 公司分潤`,
+                amount: dailyShare,
+                category: '公司匯入',
+                createdAt: serverTimestamp()
+            });
+        }
 
-        // 2. 寫入日常收入記錄
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
-            date: new Date().toISOString().split('T')[0],
-            item: `${selectedMonth} 公司分潤`,
-            amount: dailyShare,
-            category: '公司匯入',
-            createdAt: serverTimestamp()
-        });
 
         alert("✅ 結算完成！");
         setShowSettleModal(false);
@@ -111,6 +192,7 @@ const CompanyView = memo(function CompanyView({
     }
   };
 
+
   const chartData = useMemo(() => {
     const targetTx = filteredTx.filter(t => t.type === companySubTab);
     const categoryMap = {};
@@ -120,6 +202,44 @@ const CompanyView = memo(function CompanyView({
     });
     return Object.keys(categoryMap).map(k => ({ label: k, value: categoryMap[k] })).sort((a,b) => b.value - a.value);
   }, [filteredTx, companySubTab]);
+
+  
+  // UI 渲染輔助函式
+  const renderSettlementButton = () => {
+    if (isSettled) {
+        return { 
+            text: '本月已結算', 
+            icon: <CheckCircle size={18} />, 
+            style: 'bg-stone-200 text-stone-500 cursor-not-allowed', 
+            onClick: null 
+        };
+    } else if (netProfit <= 0) {
+        return { 
+            text: '本月無利潤 (或虧損)', 
+            icon: <Calculator size={18} />, 
+            style: 'bg-stone-100 text-stone-400 cursor-not-allowed', 
+            onClick: null 
+        };
+    } else if (allTimeNetProfit < 0) {
+        return { 
+            text: `優先回填虧損 $${Math.abs(allTimeNetProfit).toLocaleString()}`, 
+            icon: <Calculator size={18} />, 
+            style: 'bg-yellow-100 text-yellow-700 active:scale-95 shadow-yellow-200 hover:bg-yellow-200', 
+            onClick: () => setShowSettleModal(true) 
+        };
+    } else {
+        return { 
+            text: '結算本月分配', 
+            icon: <Calculator size={18} />, 
+            style: 'bg-emerald-100 text-emerald-700 active:scale-95 shadow-emerald-200 hover:bg-emerald-200', 
+            onClick: () => setShowSettleModal(true) 
+        };
+    }
+  }
+  
+  const settleButtonProps = renderSettlementButton();
+  const { type: settleType, companyShare, dailyShare, coveredAmount, requiredToCover } = settlementDetails;
+
 
   return (
     <div className="space-y-4 pb-24 relative">
@@ -138,41 +258,34 @@ const CompanyView = memo(function CompanyView({
       <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-10 -mt-10 blur-2xl"></div>
         <div className="relative z-10">
-          <p className="text-emerald-100 text-sm font-medium mb-1">公司總資產 (含資本額+已結算盈餘)</p>
+          <p className="text-emerald-100 text-sm font-medium mb-1">公司總資產 (含資本額+淨盈餘)</p>
           <h1 className="text-4xl font-bold tracking-tight">${currentAssets.toLocaleString()}</h1>
           
-          {/* 🆕 統計區塊：增加稅金欄位 */}
           <div className="mt-4 grid grid-cols-4 gap-2 text-sm opacity-90 pt-2 border-t border-emerald-500/30">
             <div><span className="block text-emerald-200 text-xs">本月營收</span><span className="font-bold">+${monthlyRevenue.toLocaleString()}</span></div>
             <div><span className="block text-emerald-200 text-xs">本月支出</span><span className="font-bold">-${monthlyExpense.toLocaleString()}</span></div>
             
-            {/* 🆕 應繳稅金 */}
             <div><span className="block text-emerald-200 text-xs">應繳稅金</span><span className="font-bold text-rose-300">-${monthlyTax.toLocaleString()}</span></div>
             
-            {/* 預估淨利 (未結) */}
             <div><span className="block text-emerald-200 text-xs">預估淨利</span><span className="font-bold text-yellow-300">${netProfit.toLocaleString()}</span></div>
           </div>
+          
+          {/* 🆕 歷史盈虧提示 */}
+          <div className={`mt-3 text-xs font-bold p-2 rounded-lg ${allTimeNetProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+            歷史累計盈虧: {allTimeNetProfit >= 0 ? `+$${allTimeNetProfit.toLocaleString()}` : `-$${Math.abs(allTimeNetProfit).toLocaleString()}`}
+          </div>
+
         </div>
       </div>
 
       {/* 手動結算按鈕 */}
       <div className="flex gap-2">
         <button 
-            onClick={() => setShowSettleModal(true)}
-            disabled={netProfit <= 0 || isSettled}
-            className={`flex-1 font-bold py-3 rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all 
-                ${isSettled 
-                    ? 'bg-stone-200 text-stone-500 cursor-not-allowed' 
-                    : (netProfit <= 0 
-                        ? 'bg-stone-100 text-stone-400 cursor-not-allowed' 
-                        : 'bg-emerald-100 text-emerald-700 active:scale-95 shadow-emerald-200 hover:bg-emerald-200') 
-                }`}
+            onClick={settleButtonProps.onClick}
+            disabled={settleButtonProps.onClick === null || isProcessing}
+            className={`flex-1 font-bold py-3 rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all ${settleButtonProps.style}`}
         >
-            {isSettled ? <CheckCircle size={18} /> : <Calculator size={18} />}
-            {isSettled 
-                ? '本月已結算' 
-                : '結算本月分配'
-            }
+            {isProcessing ? '處理中...' : (<>{settleButtonProps.icon} {settleButtonProps.text}</>)}
         </button>
       </div>
 
@@ -181,7 +294,7 @@ const CompanyView = memo(function CompanyView({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowSettleModal(false)}></div>
             <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
-                {/* Modal Header */}
+                
                 <div className="bg-emerald-600 p-5 text-white flex justify-between items-start">
                     <div>
                         <h3 className="text-xl font-bold flex items-center gap-2"><TrendingUp size={20}/> 結算確認</h3>
@@ -190,15 +303,22 @@ const CompanyView = memo(function CompanyView({
                     <button onClick={() => setShowSettleModal(false)} className="text-emerald-200 hover:text-white"><X size={24}/></button>
                 </div>
 
-                {/* Modal Body */}
                 <div className="p-6 space-y-4">
                     {/* 算式區塊 */}
                     <div className="space-y-2 text-sm text-stone-600 bg-stone-50 p-3 rounded-xl border border-stone-100">
-                        <div className="flex justify-between"><span>總收入</span><span className="font-bold text-stone-800">${monthlyRevenue.toLocaleString()}</span></div>
-                        <div className="flex justify-between"><span>總稅金</span><span className="font-bold text-rose-500">-${monthlyTax.toLocaleString()}</span></div>
-                        <div className="flex justify-between"><span>總支出</span><span className="font-bold text-rose-500">-${monthlyExpense.toLocaleString()}</span></div>
+                        {settleType !== 'DistributeOnly' && (
+                            <div className="text-rose-500 font-bold mb-2 p-1 border-b border-rose-100 flex items-center gap-2">
+                                <AlertTriangle size={16}/> 優先填補歷史虧損: ${requiredToCover.toLocaleString()}
+                            </div>
+                        )}
+                        <div className="flex justify-between"><span>本月淨利</span><span className="font-bold text-emerald-600">${netProfit.toLocaleString()}</span></div>
+                        
+                        {(settleType === 'CoverLossOnly' || settleType === 'CoverAndDistribute') && (
+                             <div className="flex justify-between"><span>用於回填</span><span className="font-bold text-stone-800">-${coveredAmount.toLocaleString()}</span></div>
+                        )}
+                        
                         <div className="border-t border-stone-200 my-1"></div>
-                        <div className="flex justify-between text-base"><span>淨利潤</span><span className="font-bold text-emerald-600">${netProfit.toLocaleString()}</span></div>
+                        <div className="flex justify-between text-base"><span>剩餘可分配金額</span><span className="font-bold text-emerald-600">${(netProfit - coveredAmount).toLocaleString()}</span></div>
                     </div>
 
                     {/* 分配區塊 */}
@@ -206,25 +326,25 @@ const CompanyView = memo(function CompanyView({
                         <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex flex-col items-center text-center">
                             <div className="bg-emerald-100 p-2 rounded-full mb-2 text-emerald-600"><Building2 size={20}/></div>
                             <span className="text-xs text-emerald-800 font-bold mb-1">公司盈餘 (30%)</span>
-                            <span className="text-lg font-bold text-emerald-700">${Math.round(netProfit * 0.3).toLocaleString()}</span>
+                            <span className="text-lg font-bold text-emerald-700">${companyShare.toLocaleString()}</span>
                         </div>
                         <div className="bg-orange-50 border border-orange-100 p-3 rounded-2xl flex flex-col items-center text-center">
                             <div className="bg-orange-100 p-2 rounded-full mb-2 text-orange-600"><Home size={20}/></div>
                             <span className="text-xs text-orange-800 font-bold mb-1">日常收入 (70%)</span>
-                            <span className="text-lg font-bold text-orange-700">${(netProfit - Math.round(netProfit * 0.3)).toLocaleString()}</span>
+                            <span className="text-lg font-bold text-orange-700">${dailyShare.toLocaleString()}</span>
                         </div>
                     </div>
 
-                    <p className="text-xs text-center text-stone-400">
-                        點擊確認後，系統將自動寫入帳本。
-                    </p>
+                    {settleType === 'CoverLossOnly' && (
+                        <p className="text-center text-sm text-stone-500">本月淨利已全數用於回填歷史虧損，日常收入 $0。</p>
+                    )}
 
                     <button 
                         onClick={handleConfirmSettle}
                         disabled={isProcessing}
                         className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-95 transition-all flex justify-center gap-2"
                     >
-                        {isProcessing ? '處理中...' : '確認分配'}
+                        {isProcessing ? '處理中...' : '確認分配並結算'}
                     </button>
                 </div>
             </div>

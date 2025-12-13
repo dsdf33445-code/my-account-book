@@ -21,7 +21,6 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
   // --- 狀態定義 ---
   const [tax, setTax] = useState('');                   
   const [invoiceNote, setInvoiceNote] = useState('');   
-  // 🗑️ 已刪除 invoiceDeduction 狀態
   const [expenseNote, setExpenseNote] = useState('');   
   
   const [fixedItems, setFixedItems] = useState(FIXED_EXPENSE_DEFAULTS.map(i => ({...i, value: ''})));
@@ -45,7 +44,6 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
             setCategory('發票費');
             const notePart = editingItem.item.replace('發票費', '').replace(': ', '');
             setInvoiceNote(notePart);
-            // 🗑️ 已刪除回填邏輯
          } else {
             setCategory(INCOME_CATEGORIES.includes(editingItem.item) ? editingItem.item : '其他');
             setItem(editingItem.item);
@@ -56,12 +54,14 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
          
          let cat = editingItem.item;
          let note = '';
-         if (editingItem.item.startsWith('會計費')) {
-             cat = '會計費';
-             note = editingItem.item.replace('會計費', '').replace(': ', '');
-         } else if (editingItem.item.startsWith('稅金')) {
-             cat = '稅金';
-             note = editingItem.item.replace('稅金', '').replace(': ', '');
+         
+         // 檢查是否為需要備註的支出項
+         const categoriesWithNotes = ['會計費', '稅金', 'KOL薪資'];
+         const foundCat = categoriesWithNotes.find(c => editingItem.item.startsWith(c));
+
+         if (foundCat) {
+             cat = foundCat;
+             note = editingItem.item.replace(foundCat, '').replace(': ', '');
          } else {
              const baseCat = EXPENSE_CATEGORIES.find(c => editingItem.item === c);
              cat = baseCat || '其他';
@@ -90,7 +90,6 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       setTax(''); 
       setItem('');
       setInvoiceNote(''); 
-      // 🗑️ 已刪除重置邏輯
       setExpenseNote('');     
       setTime('12:00');
       setLocation('');
@@ -138,14 +137,14 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
             netAmount: 0, 
             
             type: 'income',
-            // 🗑️ 已刪除 invoiceDeduction 欄位
             ...commonData 
         };
 
       } else if (type === 'expense') {
         let finalItemName = category;
         if (category === '其他') finalItemName = item;
-        else if ((category === '會計費' || category === '稅金') && expenseNote) {
+        // 🆕 檢查是否為需要備註的支出項 (包含 KOL薪資)
+        else if ((category === '會計費' || category === '稅金' || category === 'KOL薪資') && expenseNote) {
             finalItemName = `${category}: ${expenseNote}`;
         }
 
@@ -208,13 +207,13 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
                 <Input value={item} onChange={e => setItem(e.target.value)} placeholder={type === 'event' ? "行程名稱" : "輸入名稱..."} label="名稱" required />
             )}
 
-            {/* 發票費備註 (已移除扣除欄位) */}
+            {/* 發票費備註 */}
             {type === 'income' && category === '發票費' && (
                 <Input value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} placeholder="例如: 廠商名稱、發票號碼..." label="發票備註" />
             )}
 
-            {/* 公司支出備註 */}
-            {type === 'expense' && (category === '會計費' || category === '稅金') && (
+            {/* 公司支出備註 (會計費、稅金、KOL薪資) */}
+            {type === 'expense' && (category === '會計費' || category === '稅金' || category === 'KOL薪資') && (
                 <Input value={expenseNote} onChange={e => setExpenseNote(e.target.value)} placeholder="例如: 5月份、第一季..." label="備註" />
             )}
 
@@ -224,7 +223,6 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
                 <Input type="number" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" label="金額" required className="no-spinner" />
             )}
 
-            {/* 收入: 稅金欄位 */}
             {type === 'income' && (
                 <Input type="number" inputMode="numeric" value={tax} onChange={e => setTax(e.target.value)} placeholder="0" label="稅金" className="no-spinner" />
             )}
