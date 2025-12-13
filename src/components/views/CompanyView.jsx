@@ -1,5 +1,5 @@
 import React, { useMemo, memo, useState } from 'react';
-import { List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home } from 'lucide-react';
+import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home } from 'lucide-react';
 import { ActionButton, Card, DonutChart } from '../UI';
 import { COMPANY_CAPITAL } from '../../constants';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -22,13 +22,13 @@ const CompanyView = memo(function CompanyView({
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // 防呆：檢查該月份是否已結算
+  // 防呆：檢查使用者選擇的月份是否已結算
   const isSettled = useMemo(() => {
     return companyTx.some(tx => 
       tx.type === 'settlement' && 
       (tx.item.includes(`${selectedMonth} 盈餘結算`) || tx.date.startsWith(selectedMonth))
     );
-  }, [companyTx, selectedMonth]);
+}, [companyTx, selectedMonth]);
 
   // 計算總資產
   const currentAssets = useMemo(() => {
