@@ -1,5 +1,5 @@
 import React, { useMemo, memo, useState } from 'react';
-import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home } from 'lucide-react';
+import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home, AlertTriangle } from 'lucide-react';
 import { ActionButton, Card, DonutChart } from '../UI';
 import { COMPANY_CAPITAL } from '../../constants';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -22,7 +22,7 @@ const CompanyView = memo(function CompanyView({
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // --- 計算歷史年度盈虧 (新的核心計算) ---
+  // --- 計算歷史年度盈虧 ---
   const { allTimeNetProfit, allTimeExpense } = useMemo(() => {
     // 總收入 (Raw Income)
     const totalIncome = companyTx
@@ -39,16 +39,12 @@ const CompanyView = memo(function CompanyView({
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
-    // 總結算盈餘 (Settled Surplus) - 這是已經從公司資產撥出去的錢
+    // 總結算盈餘 (Settled Surplus)
     const totalSettledSurplus = companyTx
       .filter(t => t.type === 'settlement')
       .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
       
-    // 年度累計淨利 = 總收入 - 總稅金 - 總支出 - 總結算盈餘
-    // 這裡的邏輯是追蹤「目前總結算前」的盈餘狀態
     const netProfitBeforeSettlement = totalIncome - totalTax - totalExpense;
-
-    // 年度累計盈虧 (考慮已分配的錢)
     const allTimeNetProfit = netProfitBeforeSettlement - totalSettledSurplus;
     
     return { allTimeNetProfit, allTimeExpense: totalExpense };
@@ -56,24 +52,26 @@ const CompanyView = memo(function CompanyView({
   
   // 計算總資產
   const currentAssets = useMemo(() => {
-    // 總資產 = 資本額 + (總收入 - 總稅金 - 總支出) + (所有 settlement 盈餘)
-    // 簡化：資本額 + 歷史總淨利 (allTimeNetProfit)
     return COMPANY_CAPITAL + allTimeNetProfit;
   }, [allTimeNetProfit]);
 
- // 篩選本月資料
+
+  // 篩選本月資料
   const filteredTx = useMemo(() => {
     return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
   }, [companyTx, selectedMonth]);
-
-  // 防呆：檢查該月份是否已結算 (維持原本的 selectedMonth 判斷)
+  
+  
+  // 防呆：檢查該月份是否已結算
   const isSettled = useMemo(() => {
+    // 使用 filteredTx 檢查是否有結算紀錄
     return filteredTx.some(tx => 
       tx.type === 'settlement' && 
       (tx.item.includes(`${selectedMonth} 盈餘結算`))
     );
-  }, [companyTx, selectedMonth]);
-  
+  }, [filteredTx, selectedMonth]);
+
+
   // 計算本月營收、支出、稅金、淨利
   const { monthlyRevenue, monthlyTax, monthlyExpense, netProfit } = useMemo(() => {
     const revenue = filteredTx
@@ -96,7 +94,7 @@ const CompanyView = memo(function CompanyView({
     };
   }, [filteredTx]);
   
-  // 🆕 判斷結算類型與分配金額
+  // 判斷結算類型與分配金額
   const settlementDetails = useMemo(() => {
     const historicalLoss = allTimeNetProfit < 0 ? Math.abs(allTimeNetProfit) : 0;
     const monthlyNet = netProfit;
@@ -107,11 +105,10 @@ const CompanyView = memo(function CompanyView({
     
     // 情境 A: 優先填補歷史虧損
     if (historicalLoss > 0) {
-        const amountToCover = Math.min(monthlyNet, historicalLoss); // 本月淨利能補多少
-        const remainingProfit = monthlyNet - amountToCover; // 補完後剩下的錢
+        const amountToCover = Math.min(monthlyNet, historicalLoss); 
+        const remainingProfit = monthlyNet - amountToCover; 
         
         if (remainingProfit > 0) {
-            // 補完了還有剩，剩下的進行 30/70 分配
             const companyShare = Math.round(remainingProfit * 0.3);
             const dailyShare = remainingProfit - companyShare;
             return { 
@@ -122,7 +119,6 @@ const CompanyView = memo(function CompanyView({
                 coveredAmount: amountToCover 
             };
         } else {
-            // 剛好全部用來補虧損
             return { 
                 type: 'CoverLossOnly', 
                 companyShare: 0, 
@@ -146,33 +142,36 @@ const CompanyView = memo(function CompanyView({
     setIsProcessing(true);
     try {
         const { type, companyShare, dailyShare, coveredAmount } = settlementDetails;
-        let settlementAmount = companyShare; // 公司資產實際增加的錢
+        let settlementAmount = companyShare; 
 
-        // 如果是回填虧損模式，公司資產實際增加的是回填的總額，但日常分潤為 0
         if (type === 'CoverLossOnly') {
             settlementAmount = coveredAmount;
         } 
         
         if (type === 'CoverAndDistribute') {
-             // 補虧損的錢(coveredAmount) + 分配給公司的錢(companyShare)
              settlementAmount = coveredAmount + companyShare;
         }
 
+        // 🆕 取得該月份的最後一天作為交易日期
+        const [year, month] = selectedMonth.split('-');
+        // 計算下個月的 0 號就是本月的最後一天
+        const settlementDate = new Date(year, parseInt(month), 0).toISOString().split('T')[0];
+
         // 1. 寫入公司盈餘記錄 (記錄總回填/分配金額)
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'company_tx'), {
-            date: new Date().toISOString().split('T')[0],
+            date: settlementDate, // ⬅️ 使用該月最後一天
             item: `${selectedMonth} 盈餘結算`,
-            amount: settlementAmount, // 結算單記錄撥入公司的總金額
+            amount: settlementAmount, 
             type: 'settlement',
             category: '結算',
-            description: type, // 紀錄本次結算的類型
+            description: type,
             createdAt: serverTimestamp()
         });
         
         // 2. 寫入日常收入記錄 (只有在有實際分潤給日常時才寫入)
         if (dailyShare > 0) {
             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
-                date: new Date().toISOString().split('T')[0],
+                date: settlementDate, // ⬅️ 使用該月最後一天
                 item: `${selectedMonth} 公司分潤`,
                 amount: dailyShare,
                 category: '公司匯入',
@@ -268,7 +267,7 @@ const CompanyView = memo(function CompanyView({
             <div><span className="block text-emerald-200 text-xs">預估淨利</span><span className="font-bold text-yellow-300">${netProfit.toLocaleString()}</span></div>
           </div>
           
-          {/* 🆕 歷史盈虧提示 */}
+          {/* 歷史盈虧提示 */}
           <div className={`mt-3 text-xs font-bold p-2 rounded-lg ${allTimeNetProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
             歷史累計盈虧: {allTimeNetProfit >= 0 ? `+$${allTimeNetProfit.toLocaleString()}` : `-$${Math.abs(allTimeNetProfit).toLocaleString()}`}
           </div>
@@ -336,6 +335,15 @@ const CompanyView = memo(function CompanyView({
                     {settleType === 'CoverLossOnly' && (
                         <p className="text-center text-sm text-stone-500">本月淨利已全數用於回填歷史虧損，日常收入 $0。</p>
                     )}
+                    
+                    {settleType === 'CoverAndDistribute' && (
+                        <p className="text-center text-sm text-stone-500">結算將優先回填虧損，剩餘部分按 30/70 分配。</p>
+                    )}
+                    
+                    {settleType === 'DistributeOnly' && (
+                        <p className="text-center text-sm text-stone-500">無歷史虧損，淨利將按 30/70 分配。</p>
+                    )}
+
 
                     <button 
                         onClick={handleConfirmSettle}
