@@ -4,7 +4,7 @@ import { ActionButton, Card, DonutChart } from '../UI';
 
 const DailyView = memo(function DailyView({
   dailyTx,
-  companyTx,
+  // companyTx, // 🗑️ 不再需要依賴公司帳，因為分潤已經寫入 dailyTx 了
   selectedMonth,
   setSelectedMonth,
   showDailyChart,
@@ -15,19 +15,32 @@ const DailyView = memo(function DailyView({
   onDeleteClick
 }) {
   
-  // 優化 1: 記憶篩選結果
-  const monthlyExpenses = useMemo(() => 
+  // 1. 先篩選出本月的日常紀錄
+  const currentMonthTx = useMemo(() => 
     dailyTx.filter(tx => tx.date.startsWith(selectedMonth)), 
   [dailyTx, selectedMonth]);
 
-  const monthlyIncomes = useMemo(() => 
-    companyTx.filter(tx => tx.type === 'income' && tx.date.startsWith(selectedMonth)), 
-  [companyTx, selectedMonth]);
+  // 2. 分類：區分「支出」與「收入 (公司分潤)」
+  const { monthlyExpenses, monthlyIncomes } = useMemo(() => {
+    const expenses = [];
+    const incomes = [];
 
-  // 優化 2: 記憶金額計算
+    currentMonthTx.forEach(tx => {
+        // 判斷邏輯：如果類別是 '公司匯入'，就當作收入
+        if (tx.category === '公司匯入') {
+            incomes.push(tx);
+        } else {
+            expenses.push(tx);
+        }
+    });
+
+    return { monthlyExpenses: expenses, monthlyIncomes: incomes };
+  }, [currentMonthTx]);
+
+  // 3. 計算金額
   const { totalExpense, totalIncome, balance } = useMemo(() => {
     const exp = monthlyExpenses.reduce((sum, t) => sum + Number(t.amount), 0);
-    const inc = monthlyIncomes.reduce((sum, t) => sum + Number(t.netAmount || 0), 0);
+    const inc = monthlyIncomes.reduce((sum, t) => sum + Number(t.amount), 0);
     return { 
       totalExpense: exp, 
       totalIncome: inc, 
@@ -35,15 +48,15 @@ const DailyView = memo(function DailyView({
     };
   }, [monthlyExpenses, monthlyIncomes]);
   
-  // 優化 3: 記憶合併列表
+  // 4. 合併列表 (排序：新 -> 舊)
   const combinedList = useMemo(() => {
     return [
       ...monthlyExpenses.map(t => ({ ...t, isIncome: false })),
-      ...monthlyIncomes.map(t => ({ ...t, isIncome: true, amount: t.netAmount, item: `分潤: ${t.item}` }))
+      ...monthlyIncomes.map(t => ({ ...t, isIncome: true })) // 公司分潤顯示為收入
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [monthlyExpenses, monthlyIncomes]);
 
-  // 優化 4: 記憶圖表數據
+  // 5. 圖表數據 (只分析支出)
   const chartData = useMemo(() => {
       const categoryMap = {};
       monthlyExpenses.forEach(tx => { categoryMap[tx.item] = (categoryMap[tx.item] || 0) + Number(tx.amount); });
@@ -103,12 +116,17 @@ const DailyView = memo(function DailyView({
                       {tx.isIncome ? '+' : '-'}${Number(tx.amount).toLocaleString()}
                     </div>
                     <div className="flex justify-end gap-1 mt-1">
-                      {!tx.isIncome && (
+                      {/* 只有支出可以編輯/刪除 (公司分潤是系統生成的，建議不讓手動改，或視需求開放) */}
+                      {!tx.isIncome ? (
                         <>
                           <button type="button" onClick={() => onEditClick(tx, 'daily')} className="text-stone-300 hover:text-emerald-500 text-xs p-1"><Pencil size={14}/></button>
                           <button type="button" onClick={() => onDeleteClick('daily_tx', tx.id)} className="text-stone-300 hover:text-red-500 text-xs p-1"><Trash2 size={14}/></button>
                         </>
+                      ) : (
+                        // 公司分潤顯示刪除按鈕 (萬一結算錯了可以刪掉重結)
+                        <button type="button" onClick={() => onDeleteClick('daily_tx', tx.id)} className="text-stone-300 hover:text-red-500 text-xs p-1"><Trash2 size={14}/></button>
                       )}
+                      
                       {tx.isIncome && <span className="text-[10px] text-emerald-400 bg-emerald-50 px-1 rounded">公司匯入</span>}
                     </div>
                   </div>
