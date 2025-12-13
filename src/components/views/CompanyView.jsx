@@ -22,13 +22,13 @@ const CompanyView = memo(function CompanyView({
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // 防呆：檢查使用者選擇的月份是否已結算
+  // 防呆：檢查該月份是否已結算
   const isSettled = useMemo(() => {
     return companyTx.some(tx => 
       tx.type === 'settlement' && 
       (tx.item.includes(`${selectedMonth} 盈餘結算`) || tx.date.startsWith(selectedMonth))
     );
-}, [companyTx, selectedMonth]);
+  }, [companyTx, selectedMonth]);
 
   // 計算總資產
   const currentAssets = useMemo(() => {
@@ -52,12 +52,13 @@ const CompanyView = memo(function CompanyView({
     return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
   }, [companyTx, selectedMonth]);
   
-  // 計算本月營收與支出
+  // 計算本月營收、支出、稅金、淨利 (修正此處)
   const { monthlyRevenue, monthlyTax, monthlyExpense, netProfit } = useMemo(() => {
     const revenue = filteredTx
       .filter(t => t.type === 'income')
       .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
       
+    // 🆕 計算本月稅金總額
     const tax = filteredTx
       .filter(t => t.type === 'income')
       .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
@@ -66,6 +67,7 @@ const CompanyView = memo(function CompanyView({
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
       
+    // 淨利 = 收入 - 稅金 - 支出
     return { 
         monthlyRevenue: revenue, 
         monthlyTax: tax,
@@ -78,7 +80,6 @@ const CompanyView = memo(function CompanyView({
   const handleConfirmSettle = async () => {
     setIsProcessing(true);
     try {
-        // 優化邏輯：確保加總等於淨利 (避免 0.3+0.7 四捨五入誤差)
         const companyShare = Math.round(netProfit * 0.3);
         const dailyShare = netProfit - companyShare; 
 
@@ -140,11 +141,15 @@ const CompanyView = memo(function CompanyView({
           <p className="text-emerald-100 text-sm font-medium mb-1">公司總資產 (含資本額+已結算盈餘)</p>
           <h1 className="text-4xl font-bold tracking-tight">${currentAssets.toLocaleString()}</h1>
           
-          <div className="mt-4 flex gap-4 text-sm opacity-90 pt-2 border-t border-emerald-500/30">
+          {/* 🆕 統計區塊：增加稅金欄位 */}
+          <div className="mt-4 grid grid-cols-4 gap-2 text-sm opacity-90 pt-2 border-t border-emerald-500/30">
             <div><span className="block text-emerald-200 text-xs">本月營收</span><span className="font-bold">+${monthlyRevenue.toLocaleString()}</span></div>
-            <div className="w-px bg-emerald-500 h-8 self-center"></div>
             <div><span className="block text-emerald-200 text-xs">本月支出</span><span className="font-bold">-${monthlyExpense.toLocaleString()}</span></div>
-            <div className="w-px bg-emerald-500 h-8 self-center"></div>
+            
+            {/* 🆕 應繳稅金 */}
+            <div><span className="block text-emerald-200 text-xs">應繳稅金</span><span className="font-bold text-rose-300">-${monthlyTax.toLocaleString()}</span></div>
+            
+            {/* 預估淨利 (未結) */}
             <div><span className="block text-emerald-200 text-xs">預估淨利</span><span className="font-bold text-yellow-300">${netProfit.toLocaleString()}</span></div>
           </div>
         </div>
@@ -257,10 +262,9 @@ const CompanyView = memo(function CompanyView({
                   {tx.invoiceDeduction > 0 && companySubTab === 'income' && (
                      <div className="text-[10px] text-stone-400">扣除 -${tx.invoiceDeduction}</div>
                   )}
-                  {tx.type === 'settlement' && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded">自動結算</span>}
+                  {tx.type === 'settlement' && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded">已結算盈餘</span>}
                   
                   <div className="flex justify-end gap-1 mt-1">
-                    {/* 結算單不開放編輯，避免數據錯亂，但允許刪除以觸發重新計算 */}
                     {tx.type !== 'settlement' && (
                         <button type="button" onClick={() => onEditClick(tx, companySubTab)} className="text-stone-300 hover:text-emerald-500 text-xs p-1"><Pencil size={14}/></button>
                     )}
