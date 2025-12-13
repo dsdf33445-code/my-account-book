@@ -18,10 +18,10 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
   const [item, setItem] = useState('');
   const [category, setCategory] = useState('');
   
-  // --- 修改狀態 ---
-  const [tax, setTax] = useState('');                   // 🆕 新增：手動輸入稅金
+  // --- 狀態定義 ---
+  const [tax, setTax] = useState('');                   
   const [invoiceNote, setInvoiceNote] = useState('');   
-  const [invoiceDeduction, setInvoiceDeduction] = useState(''); 
+  // 🗑️ 已刪除 invoiceDeduction 狀態
   const [expenseNote, setExpenseNote] = useState('');   
   
   const [fixedItems, setFixedItems] = useState(FIXED_EXPENSE_DEFAULTS.map(i => ({...i, value: ''})));
@@ -35,8 +35,8 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       setDate(editingItem.date || today);
       
       if (type === 'income') {
-         setAmount(editingItem.rawAmount || editingItem.amount); // 兼容舊資料
-         setTax(editingItem.tax || ''); // 回填稅金
+         setAmount(editingItem.rawAmount || editingItem.amount); 
+         setTax(editingItem.tax || ''); 
 
          if (editingItem.category === 'KOL行銷費') {
             setCategory('KOL行銷費');
@@ -45,7 +45,7 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
             setCategory('發票費');
             const notePart = editingItem.item.replace('發票費', '').replace(': ', '');
             setInvoiceNote(notePart);
-            setInvoiceDeduction(editingItem.invoiceDeduction || '');
+            // 🗑️ 已刪除回填邏輯
          } else {
             setCategory(INCOME_CATEGORIES.includes(editingItem.item) ? editingItem.item : '其他');
             setItem(editingItem.item);
@@ -87,10 +87,10 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       // 重置
       setDate(today);
       setAmount('');
-      setTax(''); // 重置稅金
+      setTax(''); 
       setItem('');
       setInvoiceNote(''); 
-      setInvoiceDeduction(''); 
+      // 🗑️ 已刪除重置邏輯
       setExpenseNote('');     
       setTime('12:00');
       setLocation('');
@@ -119,28 +119,26 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
 
       if (type === 'income') {
         const numAmount = Number(amount);
-        const numTax = Number(tax); // 🆕 讀取手動輸入的稅金
+        const numTax = Number(tax); 
         
         let finalItemName = item;
         if (category === '其他' || category === 'KOL行銷費') finalItemName = item;
         else if (category === '發票費') finalItemName = invoiceNote ? `發票費: ${invoiceNote}` : '發票費';
         else finalItemName = category;
 
-        // 🆕 新邏輯：只單純記錄收入與稅金，不計算盈餘分配 (改由月結處理)
         docData = { 
             date, 
             item: finalItemName, 
             category: category,
-            amount: numAmount, // 統一欄位名稱
-            rawAmount: numAmount, // 保留舊欄位兼容性
-            tax: numTax,       // 儲存輸入的稅金
+            amount: numAmount, 
+            rawAmount: numAmount, 
+            tax: numTax,       
             
-            // 這些欄位設為 0 或 null，因為改為月結計算
             surplus: 0, 
             netAmount: 0, 
             
             type: 'income',
-            invoiceDeduction: category === '發票費' ? Number(invoiceDeduction) : 0,
+            // 🗑️ 已刪除 invoiceDeduction 欄位
             ...commonData 
         };
 
@@ -210,12 +208,9 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
                 <Input value={item} onChange={e => setItem(e.target.value)} placeholder={type === 'event' ? "行程名稱" : "輸入名稱..."} label="名稱" required />
             )}
 
-            {/* 發票費備註與扣除 */}
+            {/* 發票費備註 (已移除扣除欄位) */}
             {type === 'income' && category === '發票費' && (
-                <>
-                    <Input value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} placeholder="例如: 廠商名稱、發票號碼..." label="發票備註" />
-                    <Input type="number" inputMode="numeric" value={invoiceDeduction} onChange={e => setInvoiceDeduction(e.target.value)} placeholder="0" label="扣除 (紀錄用)" className="no-spinner" />
-                </>
+                <Input value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} placeholder="例如: 廠商名稱、發票號碼..." label="發票備註" />
             )}
 
             {/* 公司支出備註 */}
@@ -225,12 +220,11 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
 
             {type === 'event' && <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="地點" label="地點" />}
             
-            {/* 金額欄位 (名稱統一為金額) */}
             {['income', 'expense', 'daily'].includes(type) && (
                 <Input type="number" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" label="金額" required className="no-spinner" />
             )}
 
-            {/* 🆕 收入: 稅金欄位 (每一項都有) */}
+            {/* 收入: 稅金欄位 */}
             {type === 'income' && (
                 <Input type="number" inputMode="numeric" value={tax} onChange={e => setTax(e.target.value)} placeholder="0" label="稅金" className="no-spinner" />
             )}
