@@ -1,5 +1,5 @@
-import React, { useMemo, memo, useEffect, useState } from 'react';
-import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, CheckCircle, Clock } from 'lucide-react';
+import React, { useMemo, memo, useState } from 'react';
+import { List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home } from 'lucide-react';
 import { ActionButton, Card, DonutChart } from '../UI';
 import { COMPANY_CAPITAL } from '../../constants';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -18,88 +18,17 @@ const CompanyView = memo(function CompanyView({
   db, 
   appId
 }) {
-  const [autoSettleStatus, setAutoSettleStatus] = useState('checking'); // checking | done | none
+  // UI 狀態
+  const [showSettleModal, setShowSettleModal] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  // --- 自動結算邏輯 (useEffect) ---
-  useEffect(() => {
-    if (companyTx.length === 0) return;
-
-    const performAutoSettlement = async () => {
-        // 1. 計算「上個月」的時間字串 (YYYY-MM)
-        // 這是為了符合「每月1號計算上個月」的邏輯
-        const now = new Date();
-        const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        // 格式化為 YYYY-MM
-        const lastMonthStr = lastMonthDate.toISOString().slice(0, 7);
-
-        // 2. 檢查是否已經結算過
-        const isSettled = companyTx.some(tx => 
-            tx.type === 'settlement' && tx.item.includes(`${lastMonthStr} 盈餘結算`)
-        );
-
-        if (isSettled) {
-            setAutoSettleStatus('done');
-            return;
-        }
-
-        // 3. 如果還沒結算，開始計算上個月的數據
-        const lastMonthTx = companyTx.filter(tx => tx.date.startsWith(lastMonthStr));
-        
-        const revenue = lastMonthTx
-            .filter(t => t.type === 'income')
-            .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
-            
-        const tax = lastMonthTx
-            .filter(t => t.type === 'income')
-            .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
-
-        const expense = lastMonthTx
-            .filter(t => t.type === 'expense')
-            .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-
-        const netProfit = revenue - tax - expense;
-
-        // 4. 執行結算寫入 (只有在獲利 > 0 時)
-        if (netProfit > 0) {
-            try {
-                const companyShare = Math.round(netProfit * 0.3);
-                const dailyShare = Math.round(netProfit * 0.7);
-
-                // 寫入公司盈餘
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'company_tx'), {
-                    date: new Date().toISOString().split('T')[0], // 記錄在操作當天
-                    item: `${lastMonthStr} 盈餘結算`,
-                    amount: companyShare,
-                    type: 'settlement',
-                    category: '結算',
-                    createdAt: serverTimestamp()
-                });
-
-                // 寫入日常收入
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
-                    date: new Date().toISOString().split('T')[0],
-                    item: `${lastMonthStr} 公司分潤`,
-                    amount: dailyShare,
-                    category: '公司匯入',
-                    createdAt: serverTimestamp()
-                });
-
-                console.log(`自動結算完成: ${lastMonthStr}`);
-                setAutoSettleStatus('done');
-                // 可以選擇是否要 alert，自動化通常建議靜默執行，或用 UI 提示
-            } catch (e) {
-                console.error("自動結算失敗", e);
-            }
-        } else {
-            setAutoSettleStatus('none'); // 無利潤不需結算
-        }
-    };
-
-    performAutoSettlement();
-  }, [companyTx, db, appId]); // 當資料載入或變動時檢查
-
-
-  // --- 以下為 UI 顯示邏輯 (保持不變) ---
+  // 防呆：檢查該月份是否已結算
+  const isSettled = useMemo(() => {
+    return companyTx.some(tx => 
+      tx.type === 'settlement' && 
+      (tx.item.includes(`${selectedMonth} 盈餘結算`) || tx.date.startsWith(selectedMonth))
+    );
+  }, [companyTx, selectedMonth]);
 
   // 計算總資產
   const currentAssets = useMemo(() => {
@@ -118,12 +47,13 @@ const CompanyView = memo(function CompanyView({
     return COMPANY_CAPITAL + allTimeAssetGain - allTimeExpense;
   }, [companyTx]);
 
-  // 篩選本月資料 (UI 顯示用，根據使用者選擇的月份)
+  // 篩選本月資料
   const filteredTx = useMemo(() => {
     return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
   }, [companyTx, selectedMonth]);
   
-  const { monthlyRevenue, monthlyExpense, netProfit } = useMemo(() => {
+  // 計算本月營收與支出
+  const { monthlyRevenue, monthlyTax, monthlyExpense, netProfit } = useMemo(() => {
     const revenue = filteredTx
       .filter(t => t.type === 'income')
       .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
@@ -138,10 +68,47 @@ const CompanyView = memo(function CompanyView({
       
     return { 
         monthlyRevenue: revenue, 
+        monthlyTax: tax,
         monthlyExpense: expense,
         netProfit: revenue - tax - expense
     };
   }, [filteredTx]);
+
+  // 執行結算寫入
+  const handleConfirmSettle = async () => {
+    setIsProcessing(true);
+    try {
+        // 優化邏輯：確保加總等於淨利 (避免 0.3+0.7 四捨五入誤差)
+        const companyShare = Math.round(netProfit * 0.3);
+        const dailyShare = netProfit - companyShare; 
+
+        // 1. 寫入公司盈餘記錄
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'company_tx'), {
+            date: new Date().toISOString().split('T')[0],
+            item: `${selectedMonth} 盈餘結算`,
+            amount: companyShare,
+            type: 'settlement',
+            category: '結算',
+            createdAt: serverTimestamp()
+        });
+
+        // 2. 寫入日常收入記錄
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
+            date: new Date().toISOString().split('T')[0],
+            item: `${selectedMonth} 公司分潤`,
+            amount: dailyShare,
+            category: '公司匯入',
+            createdAt: serverTimestamp()
+        });
+
+        alert("✅ 結算完成！");
+        setShowSettleModal(false);
+    } catch (e) {
+        alert("結算失敗: " + e.message);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
 
   const chartData = useMemo(() => {
     const targetTx = filteredTx.filter(t => t.type === companySubTab);
@@ -154,7 +121,7 @@ const CompanyView = memo(function CompanyView({
   }, [filteredTx, companySubTab]);
 
   return (
-    <div className="space-y-4 pb-24">
+    <div className="space-y-4 pb-24 relative">
       {/* Date Filter */}
       <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-stone-100">
          <span className="text-sm font-bold text-stone-500 pl-2">月份篩選</span>
@@ -183,13 +150,83 @@ const CompanyView = memo(function CompanyView({
         </div>
       </div>
 
-      {/* 🆕 自動結算狀態顯示 (取代原本的按鈕) */}
-      <div className="flex items-center justify-center gap-2 bg-stone-100 p-2 rounded-xl text-xs font-bold text-stone-500">
-        {autoSettleStatus === 'done' && <><CheckCircle size={14} className="text-emerald-500"/> 上月盈餘已自動結算</>}
-        {autoSettleStatus === 'checking' && <><Clock size={14} className="animate-spin"/> 檢查結算狀態...</>}
-        {autoSettleStatus === 'none' && <>上月無盈餘，無需結算</>}
+      {/* 手動結算按鈕 */}
+      <div className="flex gap-2">
+        <button 
+            onClick={() => setShowSettleModal(true)}
+            disabled={netProfit <= 0 || isSettled}
+            className={`flex-1 font-bold py-3 rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all 
+                ${isSettled 
+                    ? 'bg-stone-200 text-stone-500 cursor-not-allowed' 
+                    : (netProfit <= 0 
+                        ? 'bg-stone-100 text-stone-400 cursor-not-allowed' 
+                        : 'bg-emerald-100 text-emerald-700 active:scale-95 shadow-emerald-200 hover:bg-emerald-200') 
+                }`}
+        >
+            {isSettled ? <CheckCircle size={18} /> : <Calculator size={18} />}
+            {isSettled 
+                ? '本月已結算' 
+                : '結算本月分配'
+            }
+        </button>
       </div>
 
+      {/* 美化後的結算確認視窗 (Modal) */}
+      {showSettleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowSettleModal(false)}></div>
+            <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
+                {/* Modal Header */}
+                <div className="bg-emerald-600 p-5 text-white flex justify-between items-start">
+                    <div>
+                        <h3 className="text-xl font-bold flex items-center gap-2"><TrendingUp size={20}/> 結算確認</h3>
+                        <p className="text-emerald-100 text-xs mt-1">月份: {selectedMonth}</p>
+                    </div>
+                    <button onClick={() => setShowSettleModal(false)} className="text-emerald-200 hover:text-white"><X size={24}/></button>
+                </div>
+
+                {/* Modal Body */}
+                <div className="p-6 space-y-4">
+                    {/* 算式區塊 */}
+                    <div className="space-y-2 text-sm text-stone-600 bg-stone-50 p-3 rounded-xl border border-stone-100">
+                        <div className="flex justify-between"><span>總收入</span><span className="font-bold text-stone-800">${monthlyRevenue.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>總稅金</span><span className="font-bold text-rose-500">-${monthlyTax.toLocaleString()}</span></div>
+                        <div className="flex justify-between"><span>總支出</span><span className="font-bold text-rose-500">-${monthlyExpense.toLocaleString()}</span></div>
+                        <div className="border-t border-stone-200 my-1"></div>
+                        <div className="flex justify-between text-base"><span>淨利潤</span><span className="font-bold text-emerald-600">${netProfit.toLocaleString()}</span></div>
+                    </div>
+
+                    {/* 分配區塊 */}
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl flex flex-col items-center text-center">
+                            <div className="bg-emerald-100 p-2 rounded-full mb-2 text-emerald-600"><Building2 size={20}/></div>
+                            <span className="text-xs text-emerald-800 font-bold mb-1">公司盈餘 (30%)</span>
+                            <span className="text-lg font-bold text-emerald-700">${Math.round(netProfit * 0.3).toLocaleString()}</span>
+                        </div>
+                        <div className="bg-orange-50 border border-orange-100 p-3 rounded-2xl flex flex-col items-center text-center">
+                            <div className="bg-orange-100 p-2 rounded-full mb-2 text-orange-600"><Home size={20}/></div>
+                            <span className="text-xs text-orange-800 font-bold mb-1">日常收入 (70%)</span>
+                            <span className="text-lg font-bold text-orange-700">${(netProfit - Math.round(netProfit * 0.3)).toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    <p className="text-xs text-center text-stone-400">
+                        點擊確認後，系統將自動寫入帳本。
+                    </p>
+
+                    <button 
+                        onClick={handleConfirmSettle}
+                        disabled={isProcessing}
+                        className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-95 transition-all flex justify-center gap-2"
+                    >
+                        {isProcessing ? '處理中...' : '確認分配'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Tabs */}
       <div className="flex bg-stone-200 p-1 rounded-2xl">
         <button onClick={() => setCompanySubTab('income')} className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${companySubTab === 'income' ? 'bg-white text-emerald-700 shadow-sm' : 'text-stone-500'}`}>收入紀錄</button>
         <button onClick={() => setCompanySubTab('expense')} className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${companySubTab === 'expense' ? 'bg-white text-rose-600 shadow-sm' : 'text-stone-500'}`}>支出紀錄</button>
