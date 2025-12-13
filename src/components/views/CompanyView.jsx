@@ -61,6 +61,10 @@ const CompanyView = memo(function CompanyView({
     return COMPANY_CAPITAL + allTimeNetProfit;
   }, [allTimeNetProfit]);
 
+ // 篩選本月資料
+  const filteredTx = useMemo(() => {
+    return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
+  }, [companyTx, selectedMonth]);
 
   // 防呆：檢查該月份是否已結算 (維持原本的 selectedMonth 判斷)
   const isSettled = useMemo(() => {
@@ -68,12 +72,6 @@ const CompanyView = memo(function CompanyView({
       tx.type === 'settlement' && 
       (tx.item.includes(`${selectedMonth} 盈餘結算`))
     );
-  }, [companyTx, selectedMonth]);
-
-
-  // 篩選本月資料
-  const filteredTx = useMemo(() => {
-    return companyTx.filter(tx => tx.date.startsWith(selectedMonth));
   }, [companyTx, selectedMonth]);
   
   // 計算本月營收、支出、稅金、淨利
