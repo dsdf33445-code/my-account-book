@@ -15,13 +15,14 @@ const CompanyView = memo(function CompanyView({
   onAddClick,
   onEditClick,
   onDeleteClick,
+  setActiveTab, // 🆕 新增：用於切換到年度報表頁面
   db, 
   appId
 }) {
   // UI 狀態
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showAnnualReportModal, setShowAnnualReportModal] = useState(false); // 🆕 年度報表狀態
+  // 🗑️ 移除 showAnnualReportModal 狀態 (改由 setActiveTab 管理)
 
   // --- 計算歷史年度盈虧 ---
   const { allTimeNetProfit, allTimeExpense } = useMemo(() => {
@@ -55,37 +56,6 @@ const CompanyView = memo(function CompanyView({
   const currentAssets = useMemo(() => {
     return COMPANY_CAPITAL + allTimeNetProfit;
   }, [allTimeNetProfit]);
-
-
-  // 🆕 計算年度累計報表 (YTD)
-  const currentYear = selectedMonth.split('-')[0]; // 取得當前年份
-  const { yearToDateIncome, yearToDateExpense } = useMemo(() => {
-    // 過濾出本年度的所有交易 (日期以當年開頭)
-    const annualTx = companyTx.filter(tx => tx.date.startsWith(currentYear));
-
-    // 總收入 (Raw Income)
-    const totalIncome = annualTx
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
-
-    // 總支出 (Expense)
-    const totalExpense = annualTx
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-      
-    // 總稅金 (Tax)
-    const totalTax = annualTx
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
-      
-    // 總支出 = 支出 + 稅金
-    const totalYtdExpense = totalExpense + totalTax;
-
-    return { 
-        yearToDateIncome: totalIncome, 
-        yearToDateExpense: totalYtdExpense 
-    };
-  }, [companyTx, currentYear]); 
 
 
   // 篩選本月資料
@@ -307,7 +277,7 @@ const CompanyView = memo(function CompanyView({
         </div>
       </div>
 
-      {/* 手動結算按鈕 & 🆕 年度報表按鈕 (並排) */}
+      {/* 手動結算按鈕 & 年度報表按鈕 (並排) */}
       <div className="flex gap-2">
         <button 
             onClick={settleButtonProps.onClick}
@@ -316,9 +286,9 @@ const CompanyView = memo(function CompanyView({
         >
             {isProcessing ? '處理中...' : (<>{settleButtonProps.icon} {settleButtonProps.text}</>)}
         </button>
-        {/* 🆕 年度報表按鈕 */}
+        {/* 🆕 年度報表按鈕 (切換頁面) */}
         <button 
-            onClick={() => setShowAnnualReportModal(true)}
+            onClick={() => setActiveTab('annual_report')} // ⬅️ 點擊後切換頁面
             className={`font-bold py-3 px-4 rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all bg-blue-100 text-blue-700 active:scale-95 shadow-blue-200 hover:bg-blue-200 w-1/2`}
         >
             <BarChart size={18} /> 年度報表
@@ -326,7 +296,7 @@ const CompanyView = memo(function CompanyView({
       </div>
 
 
-      {/* 結算確認視窗 (Settle Modal) */}
+      {/* 結算確認視窗 (Modal) */}
       {showSettleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowSettleModal(false)}></div>
@@ -391,55 +361,6 @@ const CompanyView = memo(function CompanyView({
                         className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-95 transition-all flex justify-center gap-2"
                     >
                         {isProcessing ? '處理中...' : '確認分配並結算'}
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
-      
-      {/* 🆕 年度報表視窗 (Annual Report Modal) */}
-      {showAnnualReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowAnnualReportModal(false)}></div>
-            <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
-                
-                <div className="bg-blue-600 p-5 text-white flex justify-between items-start">
-                    <div>
-                        <h3 className="text-xl font-bold flex items-center gap-2"><BarChart size={20}/> {currentYear} 年度報表</h3>
-                        <p className="text-blue-100 text-xs mt-1">累計至 {selectedMonth}</p>
-                    </div>
-                    <button onClick={() => setShowAnnualReportModal(false)} className="text-blue-200 hover:text-white"><X size={24}/></button>
-                </div>
-
-                <div className="p-6 space-y-4">
-                    {/* 數據區塊 */}
-                    <div className="space-y-3">
-                        {/* 收入 */}
-                        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex justify-between items-center">
-                            <span className="font-bold text-emerald-700 flex items-center gap-2"><TrendingUp size={18}/> 累計總收入</span>
-                            <span className="text-2xl font-extrabold text-emerald-600">${yearToDateIncome.toLocaleString()}</span>
-                        </div>
-                        
-                        {/* 支出 */}
-                        <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex justify-between items-center">
-                            <span className="font-bold text-rose-700 flex items-center gap-2"><X size={18}/> 累計總支出 (含稅金)</span>
-                            <span className="text-2xl font-extrabold text-rose-600">${yearToDateExpense.toLocaleString()}</span>
-                        </div>
-                        
-                        {/* 淨利 */}
-                        <div className={`p-4 rounded-xl text-center shadow-lg ${yearToDateIncome - yearToDateExpense >= 0 ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
-                            <span className="block text-sm opacity-80 mb-1">年度累計淨利/虧損</span>
-                            <span className="text-3xl font-extrabold">
-                                ${(yearToDateIncome - yearToDateExpense).toLocaleString()}
-                            </span>
-                        </div>
-                    </div>
-
-                    <button 
-                        onClick={() => setShowAnnualReportModal(false)}
-                        className="w-full py-3 bg-stone-200 text-stone-700 font-bold rounded-xl hover:bg-stone-300 active:scale-95 transition-all"
-                    >
-                        關閉
                     </button>
                 </div>
             </div>

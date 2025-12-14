@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import './index.css';
-import { User } from 'lucide-react'; // 加入 User icon
-import ProfileView from './components/views/ProfileView'; // 引入新頁面
+import { User } from 'lucide-react'; 
+import ProfileView from './components/views/ProfileView'; 
 import { 
   getAuth, 
   signInAnonymously, 
@@ -33,6 +33,8 @@ import CompanyView from './components/views/CompanyView';
 import DailyView from './components/views/DailyView';
 import CalendarView from './components/views/CalendarView';
 import TodoView from './components/views/TodoView';
+// 🆕 引入新的年度報表頁面
+import AnnualReportView from './components/views/AnnualReportView'; 
 
 // --- 1. Firebase Config ---
 const firebaseConfig = {
@@ -52,6 +54,7 @@ const appId = "my-account-book-v1";
 
 export default function App() {
   const [user, setUser] = useState(null);
+  // 🆕 新增 'annual_report' 狀態
   const [activeTab, setActiveTab] = useState('company'); 
   const [isLoading, setIsLoading] = useState(true);
 
@@ -128,7 +131,7 @@ export default function App() {
         setConfirmConfig(prev => ({ ...prev, isOpen: false }));
       }
     });
-  }, []); // db, appId are stable external/consts
+  }, []); 
 
   const triggerEdit = useCallback((item, type) => {
     setEditingItem(item);
@@ -150,7 +153,7 @@ export default function App() {
     setIsModalOpen(true);
   }, []);
 
-  // --- Sub-components (Can be extracted too, but okay here for now) ---
+  // --- Sub-components (Modal and Nav) ---
   const ConfirmModal = () => {
     if (!confirmConfig.isOpen) return null;
     return (
@@ -170,6 +173,9 @@ export default function App() {
   };
 
   const BottomNav = () => {
+    // 只有在非年度報表頁面才顯示導航
+    if (activeTab === 'annual_report') return null; 
+    
     const navItems = [{ id: 'calendar', icon: CalendarIcon, label: '行事曆' }, 
 		      { id: 'company', icon: Briefcase, label: '公司' }, 
 		      { id: 'daily', icon: Wallet, label: '日常' }, 
@@ -212,7 +218,8 @@ export default function App() {
                 onAddClick={() => openModal(companySubTab)}
                 onEditClick={triggerEdit}
                 onDeleteClick={triggerDelete}
-		db={db}
+                setActiveTab={setActiveTab} // 傳遞切換頁面的函式
+                db={db}
                 appId={appId}
               />
             )}
@@ -243,6 +250,15 @@ export default function App() {
                 onDeleteClick={triggerDelete}
               />
             )}
+            
+            {/* 🆕 年度報表頁面 */}
+            {activeTab === 'annual_report' && (
+              <AnnualReportView
+                companyTx={companyTx}
+                currentYear={selectedMonth.split('-')[0]}
+                setActiveTab={setActiveTab}
+              />
+            )}
 
 	    {activeTab === 'profile' && (
              <ProfileView user={user} />
@@ -259,6 +275,7 @@ export default function App() {
             appId={appId}
           />
           <ConfirmModal />
+          {/* 導航列 */}
           <BottomNav />
        </div>
     </div>
