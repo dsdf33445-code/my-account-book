@@ -1,5 +1,5 @@
 import React, { useMemo, memo, useState } from 'react';
-import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home, AlertTriangle } from 'lucide-react';
+import { Plus, List, PieChart as PieChartIcon, Pencil, Trash2, Calculator, CheckCircle, X, TrendingUp, Building2, Home, AlertTriangle, BarChart } from 'lucide-react';
 import { ActionButton, Card, DonutChart } from '../UI';
 import { COMPANY_CAPITAL } from '../../constants';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -21,6 +21,7 @@ const CompanyView = memo(function CompanyView({
   // UI 狀態
   const [showSettleModal, setShowSettleModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showAnnualReportModal, setShowAnnualReportModal] = useState(false); // 🆕 年度報表狀態
 
   // --- 計算歷史年度盈虧 ---
   const { allTimeNetProfit, allTimeExpense } = useMemo(() => {
@@ -54,6 +55,37 @@ const CompanyView = memo(function CompanyView({
   const currentAssets = useMemo(() => {
     return COMPANY_CAPITAL + allTimeNetProfit;
   }, [allTimeNetProfit]);
+
+
+  // 🆕 計算年度累計報表 (YTD)
+  const currentYear = selectedMonth.split('-')[0]; // 取得當前年份
+  const { yearToDateIncome, yearToDateExpense } = useMemo(() => {
+    // 過濾出本年度的所有交易 (日期以當年開頭)
+    const annualTx = companyTx.filter(tx => tx.date.startsWith(currentYear));
+
+    // 總收入 (Raw Income)
+    const totalIncome = annualTx
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + (Number(t.rawAmount || t.amount) || 0), 0);
+
+    // 總支出 (Expense)
+    const totalExpense = annualTx
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+      
+    // 總稅金 (Tax)
+    const totalTax = annualTx
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + (Number(t.tax) || 0), 0);
+      
+    // 總支出 = 支出 + 稅金
+    const totalYtdExpense = totalExpense + totalTax;
+
+    return { 
+        yearToDateIncome: totalIncome, 
+        yearToDateExpense: totalYtdExpense 
+    };
+  }, [companyTx, currentYear]); 
 
 
   // 篩選本月資料
@@ -100,7 +132,7 @@ const CompanyView = memo(function CompanyView({
     const monthlyNet = netProfit;
     
     if (monthlyNet <= 0) {
-        return { type: 'NoProfit', companyShare: 0, dailyShare: 0, requiredToCover: 0 };
+        return { type: 'NoProfit', companyShare: 0, dailyShare: 0, requiredToCover: 0, coveredAmount: 0 };
     }
     
     // 情境 A: 優先填補歷史虧損
@@ -152,14 +184,14 @@ const CompanyView = memo(function CompanyView({
              settlementAmount = coveredAmount + companyShare;
         }
 
-        // 🆕 取得該月份的最後一天作為交易日期
+        // 取得該月份的最後一天作為交易日期
         const [year, month] = selectedMonth.split('-');
         // 計算下個月的 0 號就是本月的最後一天
         const settlementDate = new Date(year, parseInt(month), 0).toISOString().split('T')[0];
 
         // 1. 寫入公司盈餘記錄 (記錄總回填/分配金額)
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'company_tx'), {
-            date: settlementDate, // ⬅️ 使用該月最後一天
+            date: settlementDate, // 使用該月最後一天
             item: `${selectedMonth} 盈餘結算`,
             amount: settlementAmount, 
             type: 'settlement',
@@ -171,7 +203,7 @@ const CompanyView = memo(function CompanyView({
         // 2. 寫入日常收入記錄 (只有在有實際分潤給日常時才寫入)
         if (dailyShare > 0) {
             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), {
-                date: settlementDate, // ⬅️ 使用該月最後一天
+                date: settlementDate, // 使用該月最後一天
                 item: `${selectedMonth} 公司分潤`,
                 amount: dailyShare,
                 category: '公司匯入',
@@ -212,14 +244,14 @@ const CompanyView = memo(function CompanyView({
         };
     } else if (netProfit <= 0) {
         return { 
-            text: '本月無利潤 (或虧損)', 
+            text: '本月無利潤', 
             icon: <Calculator size={18} />, 
             style: 'bg-stone-100 text-stone-400 cursor-not-allowed', 
             onClick: null 
         };
     } else if (allTimeNetProfit < 0) {
         return { 
-            text: `優先回填虧損 $${Math.abs(allTimeNetProfit).toLocaleString()}`, 
+            text: `回填虧損`, 
             icon: <Calculator size={18} />, 
             style: 'bg-yellow-100 text-yellow-700 active:scale-95 shadow-yellow-200 hover:bg-yellow-200', 
             onClick: () => setShowSettleModal(true) 
@@ -275,7 +307,7 @@ const CompanyView = memo(function CompanyView({
         </div>
       </div>
 
-      {/* 手動結算按鈕 */}
+      {/* 手動結算按鈕 & 🆕 年度報表按鈕 (並排) */}
       <div className="flex gap-2">
         <button 
             onClick={settleButtonProps.onClick}
@@ -284,9 +316,17 @@ const CompanyView = memo(function CompanyView({
         >
             {isProcessing ? '處理中...' : (<>{settleButtonProps.icon} {settleButtonProps.text}</>)}
         </button>
+        {/* 🆕 年度報表按鈕 */}
+        <button 
+            onClick={() => setShowAnnualReportModal(true)}
+            className={`font-bold py-3 px-4 rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all bg-blue-100 text-blue-700 active:scale-95 shadow-blue-200 hover:bg-blue-200 w-1/2`}
+        >
+            <BarChart size={18} /> 年度報表
+        </button>
       </div>
 
-      {/* 美化後的結算確認視窗 (Modal) */}
+
+      {/* 結算確認視窗 (Settle Modal) */}
       {showSettleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowSettleModal(false)}></div>
@@ -356,6 +396,56 @@ const CompanyView = memo(function CompanyView({
             </div>
         </div>
       )}
+      
+      {/* 🆕 年度報表視窗 (Annual Report Modal) */}
+      {showAnnualReportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setShowAnnualReportModal(false)}></div>
+            <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
+                
+                <div className="bg-blue-600 p-5 text-white flex justify-between items-start">
+                    <div>
+                        <h3 className="text-xl font-bold flex items-center gap-2"><BarChart size={20}/> {currentYear} 年度報表</h3>
+                        <p className="text-blue-100 text-xs mt-1">累計至 {selectedMonth}</p>
+                    </div>
+                    <button onClick={() => setShowAnnualReportModal(false)} className="text-blue-200 hover:text-white"><X size={24}/></button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    {/* 數據區塊 */}
+                    <div className="space-y-3">
+                        {/* 收入 */}
+                        <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex justify-between items-center">
+                            <span className="font-bold text-emerald-700 flex items-center gap-2"><TrendingUp size={18}/> 累計總收入</span>
+                            <span className="text-2xl font-extrabold text-emerald-600">${yearToDateIncome.toLocaleString()}</span>
+                        </div>
+                        
+                        {/* 支出 */}
+                        <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex justify-between items-center">
+                            <span className="font-bold text-rose-700 flex items-center gap-2"><X size={18}/> 累計總支出 (含稅金)</span>
+                            <span className="text-2xl font-extrabold text-rose-600">${yearToDateExpense.toLocaleString()}</span>
+                        </div>
+                        
+                        {/* 淨利 */}
+                        <div className={`p-4 rounded-xl text-center shadow-lg ${yearToDateIncome - yearToDateExpense >= 0 ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
+                            <span className="block text-sm opacity-80 mb-1">年度累計淨利/虧損</span>
+                            <span className="text-3xl font-extrabold">
+                                ${(yearToDateIncome - yearToDateExpense).toLocaleString()}
+                            </span>
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={() => setShowAnnualReportModal(false)}
+                        className="w-full py-3 bg-stone-200 text-stone-700 font-bold rounded-xl hover:bg-stone-300 active:scale-95 transition-all"
+                    >
+                        關閉
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
 
       {/* Tabs */}
       <div className="flex bg-stone-200 p-1 rounded-2xl">
