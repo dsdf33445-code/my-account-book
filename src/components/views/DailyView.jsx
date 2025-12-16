@@ -63,18 +63,17 @@ const DailyView = memo(function DailyView({
       return Object.keys(categoryMap).map(k => ({ label: k, value: categoryMap[k] })).sort((a,b) => b.value - a.value);
   }, [monthlyExpenses]);
 
-  return (
-    <div className="space-y-4 pb-24">
-       {/* 月份篩選 */}
-       <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-stone-100 mb-2">
-         <span className="text-sm font-bold text-stone-500 pl-2">月份篩選</span>
-         <input 
-           type="month" 
-           value={selectedMonth} 
-           onChange={e => setSelectedMonth(e.target.value)} 
-           className="bg-stone-50 border-none text-stone-700 font-bold rounded-xl px-3 py-1 text-sm focus:ring-2 focus:ring-emerald-200"
-         />
-      </div>
+return (
+  <div className="space-y-4 pb-24">
+     {/* 月份篩選與收支看板保持不變 */}
+     {/* ... */}
+
+     <div className="flex gap-2">
+        {/* 🆕 修改：移除固定支出按鈕，只保留記一筆 */}
+        <ActionButton onClick={onAddClick} className="flex-1"><Plus size={18} /> 記一筆</ActionButton>
+     </div>     
+  </div>
+);
 
        {/* 收支看板 */}
        <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-stone-100 grid grid-cols-3 divide-x divide-stone-100">

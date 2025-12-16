@@ -51,11 +51,8 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
 
       } else if (type === 'expense') {
          setAmount(editingItem.amount);
-         
          let cat = editingItem.item;
          let note = '';
-         
-         // 檢查是否為需要備註的支出項
          const categoriesWithNotes = ['會計費', '稅金', 'KOL薪資'];
          const foundCat = categoriesWithNotes.find(c => editingItem.item.startsWith(c));
 
@@ -72,9 +69,21 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
 
       } else if (type === 'daily') {
          setAmount(editingItem.amount);
-         setItem(editingItem.item);
-         setCategory(DAILY_CATEGORIES.includes(editingItem.item) ? editingItem.item : '其他');
-         if (!DAILY_CATEGORIES.includes(editingItem.item)) setItem(editingItem.item);
+         let cat = editingItem.item;
+         let note = '';
+         
+         // 🆕 孝親費編輯初始化
+         if (editingItem.item.startsWith('孝親費')) {
+             cat = '孝親費';
+             note = editingItem.item.replace('孝親費', '').replace(': ', '');
+         } else {
+             const baseCat = DAILY_CATEGORIES.find(c => editingItem.item === c);
+             cat = baseCat || '其他';
+             if (cat === '其他') setItem(editingItem.item);
+         }
+         setCategory(cat);
+         setExpenseNote(note);
+
       } else if (type === 'event') {
          setItem(editingItem.title);
          setTime(editingItem.time);
@@ -100,7 +109,7 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       else if (type === 'income') setCategory(INCOME_CATEGORIES[0]);
       else if (type === 'todo') setTodoType('待辦事項');
     }
-  }, [editingItem, type, isOpen]);
+  }, [editingItem, type, isOpen, today]);
 
   const handleFixedChange = (index, val) => { 
     const newItems = [...fixedItems]; 
@@ -119,46 +128,33 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
       if (type === 'income') {
         const numAmount = Number(amount);
         const numTax = Number(tax); 
-        
         let finalItemName = item;
         if (category === '其他' || category === 'KOL行銷費') finalItemName = item;
         else if (category === '發票費') finalItemName = invoiceNote ? `發票費: ${invoiceNote}` : '發票費';
         else finalItemName = category;
 
         docData = { 
-            date, 
-            item: finalItemName, 
-            category: category,
-            amount: numAmount, 
-            rawAmount: numAmount, 
-            tax: numTax,       
-            
-            surplus: 0, 
-            netAmount: 0, 
-            
-            type: 'income',
-            ...commonData 
+            date, item: finalItemName, category, amount: numAmount, rawAmount: numAmount, tax: numTax,
+            surplus: 0, netAmount: 0, type: 'income', ...commonData 
         };
 
       } else if (type === 'expense') {
         let finalItemName = category;
         if (category === '其他') finalItemName = item;
-        // 🆕 檢查是否為需要備註的支出項 (包含 KOL薪資)
         else if ((category === '會計費' || category === '稅金' || category === 'KOL薪資') && expenseNote) {
             finalItemName = `${category}: ${expenseNote}`;
         }
-
-        docData = { 
-            date, 
-            item: finalItemName, 
-            category: category, 
-            amount: Number(amount), 
-            type: 'expense', 
-            ...commonData 
-        };
+        docData = { date, item: finalItemName, category, amount: Number(amount), type: 'expense', ...commonData };
 
       } else if (type === 'daily') {
-        docData = { date, item: category === '其他' ? item : category, amount: Number(amount), ...commonData };
+        let finalItemName = category;
+        if (category === '其他') finalItemName = item;
+        // 🆕 孝親費儲存邏輯
+        else if (category === '孝親費' && expenseNote) {
+            finalItemName = `孝親費: ${expenseNote}`;
+        }
+        docData = { date, item: finalItemName, category, amount: Number(amount), ...commonData };
+
       } else if (type === 'daily_fixed') {
          const batchPromises = fixedItems.filter(fi => Number(fi.value) > 0).map(fi => addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'daily_tx'), { date, item: fi.label, amount: Number(fi.value), ...commonData }));
          await Promise.all(batchPromises);
@@ -194,8 +190,6 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
          <form onSubmit={handleSubmit}>
             {['income', 'expense', 'daily', 'event', 'daily_fixed'].includes(type) && <Input type="date" value={date} onChange={e => setDate(e.target.value)} label="日期" required />}
             
-            {type === 'daily_fixed' && !editingItem && <div className="space-y-3 mb-4"><p className="text-xs text-stone-500 mb-2">請輸入本月金額 (填寫項目將自動加入)</p>{fixedItems.map((fi, idx) => (<div key={fi.label} className="flex items-center gap-2"><label className="text-sm font-bold text-stone-600 w-20">{fi.label}</label><input type="number" placeholder="0" value={fi.value} onChange={(e) => handleFixedChange(idx, e.target.value)} className="flex-1 bg-stone-50 border border-stone-200 rounded-lg p-2 text-stone-700 outline-none focus:border-emerald-300 text-right no-spinner" /></div>))}</div>}
-            
             {type === 'event' && <Input type="time" value={time} onChange={e => setTime(e.target.value)} label="時間" required />}
             
             {type === 'income' && <Select value={category} onChange={e => setCategory(e.target.value)} options={INCOME_CATEGORIES} label="項目分類" />}
@@ -212,9 +206,9 @@ export default function ModalForm({ isOpen, onClose, type, editingItem, db, appI
                 <Input value={invoiceNote} onChange={e => setInvoiceNote(e.target.value)} placeholder="例如: 廠商名稱、發票號碼..." label="發票備註" />
             )}
 
-            {/* 公司支出備註 (會計費、稅金、KOL薪資) */}
-            {type === 'expense' && (category === '會計費' || category === '稅金' || category === 'KOL薪資') && (
-                <Input value={expenseNote} onChange={e => setExpenseNote(e.target.value)} placeholder="例如: 5月份、第一季..." label="備註" />
+            {/* 🆕 公司支出備註 或 日常孝親費備註 */}
+            {((type === 'expense' && (category === '會計費' || category === '稅金' || category === 'KOL薪資')) || (type === 'daily' && category === '孝親費')) && (
+                <Input value={expenseNote} onChange={e => setExpenseNote(e.target.value)} placeholder="例如: 5月份、父親節..." label="備註" />
             )}
 
             {type === 'event' && <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="地點" label="地點" />}
