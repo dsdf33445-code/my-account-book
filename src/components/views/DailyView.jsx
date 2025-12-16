@@ -4,13 +4,11 @@ import { ActionButton, Card, DonutChart } from '../UI';
 
 const DailyView = memo(function DailyView({
   dailyTx,
-  // companyTx, // 🗑️ 不再需要依賴公司帳，因為分潤已經寫入 dailyTx 了
   selectedMonth,
   setSelectedMonth,
   showDailyChart,
   setShowDailyChart,
   onAddClick,
-  onAddFixedClick,
   onEditClick,
   onDeleteClick
 }) {
@@ -26,7 +24,6 @@ const DailyView = memo(function DailyView({
     const incomes = [];
 
     currentMonthTx.forEach(tx => {
-        // 判斷邏輯：如果類別是 '公司匯入'，就當作收入
         if (tx.category === '公司匯入') {
             incomes.push(tx);
         } else {
@@ -52,7 +49,7 @@ const DailyView = memo(function DailyView({
   const combinedList = useMemo(() => {
     return [
       ...monthlyExpenses.map(t => ({ ...t, isIncome: false })),
-      ...monthlyIncomes.map(t => ({ ...t, isIncome: true })) // 公司分潤顯示為收入
+      ...monthlyIncomes.map(t => ({ ...t, isIncome: true }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [monthlyExpenses, monthlyIncomes]);
 
@@ -63,17 +60,18 @@ const DailyView = memo(function DailyView({
       return Object.keys(categoryMap).map(k => ({ label: k, value: categoryMap[k] })).sort((a,b) => b.value - a.value);
   }, [monthlyExpenses]);
 
-return (
-  <div className="space-y-4 pb-24">
-     {/* 月份篩選與收支看板保持不變 */}
-     {/* ... */}
-
-     <div className="flex gap-2">
-        {/* 🆕 修改：移除固定支出按鈕，只保留記一筆 */}
-        <ActionButton onClick={onAddClick} className="flex-1"><Plus size={18} /> 記一筆</ActionButton>
-     </div>     
-  </div>
-);
+  return (
+    <div className="space-y-4 pb-24">
+       {/* 月份篩選 */}
+       <div className="flex justify-between items-center bg-white p-2 rounded-2xl shadow-sm border border-stone-100 mb-2">
+         <span className="text-sm font-bold text-stone-500 pl-2">月份篩選</span>
+         <input 
+           type="month" 
+           value={selectedMonth} 
+           onChange={e => setSelectedMonth(e.target.value)} 
+           className="bg-stone-50 border-none text-stone-700 font-bold rounded-xl px-3 py-1 text-sm focus:ring-2 focus:ring-emerald-200"
+         />
+      </div>
 
        {/* 收支看板 */}
        <div className="bg-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-stone-100 grid grid-cols-3 divide-x divide-stone-100">
@@ -92,9 +90,12 @@ return (
        </div>
 
        <div className="flex gap-2">
-          <ActionButton onClick={onAddClick} className="flex-1"><Plus size={18} /> 記一筆</ActionButton>
-          <ActionButton onClick={onAddFixedClick} variant="secondary" className="!px-3">固定支出</ActionButton>
+          {/* 🆕 這裡修正了 Build 報錯的區域：移除固定支出按鈕，只保留記一筆 */}
+          <ActionButton onClick={onAddClick} className="flex-1">
+            <Plus size={18} /> 記一筆
+          </ActionButton>
        </div>
+
        <button onClick={() => setShowDailyChart(!showDailyChart)} className={`w-full py-2 rounded-xl text-sm font-bold flex items-center justify-center gap-1 border border-stone-100 ${showDailyChart ? 'bg-emerald-50 text-emerald-600' : 'bg-white text-stone-400'}`}>{showDailyChart ? <List size={16}/> : <PieChartIcon size={16}/>} {showDailyChart ? '切換回列表' : '查看統計圖表'}</button>
        
        {showDailyChart ? <Card><h3 className="font-bold text-stone-700 mb-4 text-center">消費類別佔比 ({selectedMonth})</h3><DonutChart data={chartData} /></Card> :
@@ -115,14 +116,12 @@ return (
                       {tx.isIncome ? '+' : '-'}${Number(tx.amount).toLocaleString()}
                     </div>
                     <div className="flex justify-end gap-1 mt-1">
-                      {/* 只有支出可以編輯/刪除 (公司分潤是系統生成的，建議不讓手動改，或視需求開放) */}
                       {!tx.isIncome ? (
                         <>
                           <button type="button" onClick={() => onEditClick(tx, 'daily')} className="text-stone-300 hover:text-emerald-500 text-xs p-1"><Pencil size={14}/></button>
                           <button type="button" onClick={() => onDeleteClick('daily_tx', tx.id)} className="text-stone-300 hover:text-red-500 text-xs p-1"><Trash2 size={14}/></button>
                         </>
                       ) : (
-                        // 公司分潤顯示刪除按鈕 (萬一結算錯了可以刪掉重結)
                         <button type="button" onClick={() => onDeleteClick('daily_tx', tx.id)} className="text-stone-300 hover:text-red-500 text-xs p-1"><Trash2 size={14}/></button>
                       )}
                       
