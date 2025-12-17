@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import './index.css';
-import { User } from 'lucide-react'; 
+import { User as UserIcon } from 'lucide-react'; 
 import ProfileView from './components/views/ProfileView'; 
 import { 
   getAuth, 
@@ -33,8 +33,6 @@ import CompanyView from './components/views/CompanyView';
 import DailyView from './components/views/DailyView';
 import CalendarView from './components/views/CalendarView';
 import TodoView from './components/views/TodoView';
-// 🆕 引入新的年度報表頁面
-import AnnualReportView from './components/views/AnnualReportView'; 
 
 // --- 1. Firebase Config ---
 const firebaseConfig = {
@@ -43,169 +41,141 @@ const firebaseConfig = {
   projectId: import.meta.env.VITE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app); 
+const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "my-account-book-v1";
+const appId = firebaseConfig.projectId;
 
 export default function App() {
   const [user, setUser] = useState(null);
-  // 🆕 新增 'annual_report' 狀態
-  const [activeTab, setActiveTab] = useState('company'); 
   const [isLoading, setIsLoading] = useState(true);
-
+  const [activeTab, setActiveTab] = useState('company');
+  
   // Data States
   const [companyTx, setCompanyTx] = useState([]);
   const [dailyTx, setDailyTx] = useState([]);
-  const [todos, setTodos] = useState([]);
   const [events, setEvents] = useState([]);
-  
+  const [todos, setTodos] = useState([]);
+
   // UI States
-  const [todoFilter, setTodoFilter] = useState('待辦事項');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [companySubTab, setCompanySubTab] = useState('income');
   const [showCompanyChart, setShowCompanyChart] = useState(false);
   const [showDailyChart, setShowDailyChart] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
-
-  // Modal States
+  const [todoFilter, setTodoFilter] = useState('待辦事項');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalType, setModalType] = useState(null); 
-  const [editingItem, setEditingItem] = useState(null); 
-  
-  // Confirm Modal State
-  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
+  const [modalType, setModalType] = useState('income');
+  const [editingItem, setEditingItem] = useState(null);
+  const [confirmModal, setConfirmModal] = useState({ show: false, collection: '', id: '' });
 
-  // --- Auth & Init ---
+  // 🆕 核心修正：優化驗證邏輯，防止重複登入與狀態遺失
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("Login Failed:", err));
-    return onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (!u) setIsLoading(false);
-    });
-  }, []);
-
-  // --- Data Listeners ---
-  useEffect(() => {
-    if (!user) return;
-    setIsLoading(true);
-    const getPublicCollection = (name) => collection(db, 'artifacts', appId, 'public', 'data', name);
-    
-    const unsubCompany = onSnapshot(query(getPublicCollection('company_tx'), orderBy('date', 'desc')), 
-      s => setCompanyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      e => console.error("Company Sync Error:", e)
-    );
-    const unsubDaily = onSnapshot(query(getPublicCollection('daily_tx'), orderBy('date', 'desc')), 
-      s => setDailyTx(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      e => console.error("Daily Sync Error:", e)
-    );
-    const unsubTodos = onSnapshot(query(getPublicCollection('todos'), orderBy('createdAt', 'desc')), 
-      s => setTodos(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      e => console.error("Todos Sync Error:", e)
-    );
-    const unsubEvents = onSnapshot(query(getPublicCollection('events'), orderBy('date', 'asc')), 
-      s => {
-        setEvents(s.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        // 如果已經有使用者（不論是 Google 還是匿名），直接設定狀態
+        setUser(currentUser);
         setIsLoading(false);
-      },
-      e => console.error("Events Sync Error:", e)
-    );
-
-    return () => { unsubCompany(); unsubDaily(); unsubTodos(); unsubEvents(); };
-  }, [user]);
-
-  // --- Optimized Global Handlers (useCallback) ---
-  
-  const triggerDelete = useCallback((collectionName, id, title = "確定要刪除嗎？") => {
-    setConfirmConfig({
-      isOpen: true,
-      title,
-      message: "刪除後將無法復原此項目。",
-      onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', collectionName, id));
-        } catch (e) { console.error(e); }
-        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      } else {
+        // 只有在完全沒有使用者狀態時，才嘗試匿名登入
+        signInAnonymously(auth)
+          .then((result) => {
+            setUser(result.user);
+            setIsLoading(false);
+          })
+          .catch((error) => {
+            console.error("Firebase Auth Error:", error);
+            setIsLoading(false);
+          });
       }
     });
-  }, []); 
 
-  const triggerEdit = useCallback((item, type) => {
-    setEditingItem(item);
-    setModalType(type);
-    setIsModalOpen(true);
+    return () => unsubscribe();
   }, []);
 
-  const toggleTodo = useCallback(async (todo) => {
-    try { 
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'todos', todo.id), { 
-        isDone: !todo.isDone 
-      }); 
-    } catch (e) { console.error(e); }
-  }, []);
-
-  const openModal = useCallback((type) => {
-    setEditingItem(null);
-    setModalType(type);
-    setIsModalOpen(true);
-  }, []);
-
-  // --- Sub-components (Modal and Nav) ---
-  const ConfirmModal = () => {
-    if (!confirmConfig.isOpen) return null;
-    return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm" onClick={() => setConfirmConfig(p => ({...p, isOpen: false}))}></div>
-        <Card className="w-full max-w-xs relative z-10 animate-in fade-in zoom-in duration-200 text-center">
-           <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4 text-rose-500"><AlertTriangle size={24}/></div>
-           <h3 className="text-lg font-bold text-stone-800 mb-2">{confirmConfig.title}</h3>
-           <p className="text-stone-500 text-sm mb-6">{confirmConfig.message}</p>
-           <div className="flex gap-2">
-             <button onClick={() => setConfirmConfig(p => ({...p, isOpen: false}))} className="flex-1 py-3 bg-stone-100 text-stone-600 font-bold rounded-xl hover:bg-stone-200">取消</button>
-             <button onClick={confirmConfig.onConfirm} className="flex-1 py-3 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 shadow-lg shadow-rose-200">刪除</button>
-           </div>
-        </Card>
-      </div>
-    );
-  };
-
-  const BottomNav = () => {
-    // 只有在非年度報表頁面才顯示導航
-    if (activeTab === 'annual_report') return null; 
+  // Firestore Realtime Listeners
+  useEffect(() => {
+    if (!user) return;
+    const base = `artifacts/${appId}/public/data`;
     
-    const navItems = [{ id: 'calendar', icon: CalendarIcon, label: '行事曆' }, 
-		      { id: 'company', icon: Briefcase, label: '公司' }, 
-		      { id: 'daily', icon: Wallet, label: '日常' }, 
-		      { id: 'todo', icon: CheckSquare, label: '待辦' },
-		      { id: 'profile', icon: User, label: '我的' }
-		     ];
-    return (
-      <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-stone-100 pb-safe pt-2 px-6 z-40 rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
-         <div className="flex justify-between items-center max-w-md mx-auto h-16">{navItems.map(item => { const isActive = activeTab === item.id; return (<button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-col items-center gap-1 transition-all duration-300 ${isActive ? 'text-emerald-600 -translate-y-2' : 'text-stone-400 hover:text-stone-600'}`}><div className={`p-2 rounded-2xl transition-all ${isActive ? 'bg-emerald-100 shadow-sm' : 'bg-transparent'}`}><item.icon size={24} strokeWidth={isActive ? 2.5 : 2} /></div><span className={`text-[10px] font-bold ${isActive ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>{item.label}</span></button>) })}</div>
-      </div>
-    );
+    const unsub = [
+      onSnapshot(query(collection(db, `${base}/company_tx`), orderBy('date', 'desc')), s => setCompanyTx(s.docs.map(d => ({id: d.id, ...d.data()})))),
+      onSnapshot(query(collection(db, `${base}/daily_tx`), orderBy('date', 'desc')), s => setDailyTx(s.docs.map(d => ({id: d.id, ...d.data()})))),
+      onSnapshot(query(collection(db, `${base}/events`), orderBy('date', 'asc')), s => setEvents(s.docs.map(d => ({id: d.id, ...d.data()})))),
+      onSnapshot(query(collection(db, `${base}/todos`), orderBy('createdAt', 'desc')), s => setTodos(s.docs.map(d => ({id: d.id, ...d.data()})))),
+    ];
+    return () => unsub.forEach(fn => fn());
+  }, [user, appId]);
+
+  const openModal = (type, item = null) => {
+    setModalType(type);
+    setEditingItem(item);
+    setIsModalOpen(true);
   };
 
-  if (isLoading) return <div className="flex h-screen items-center justify-center text-stone-500">載入中...</div>;
+  const triggerEdit = (item, type) => openModal(type, item);
+  const triggerDelete = (col, id) => setConfirmModal({ show: true, collection: col, id });
+
+  const handleDelete = async () => {
+    try {
+      await deleteDoc(doc(db, `artifacts/${appId}/public/data/${confirmModal.collection}`, confirmModal.id));
+      setConfirmModal({ show: false, collection: '', id: '' });
+    } catch (err) { alert("刪除失敗"); }
+  };
+
+  const toggleTodo = async (todo) => {
+    await updateDoc(doc(db, `artifacts/${appId}/public/data/todos`, todo.id), { isDone: !todo.isDone });
+  };
+
+  if (isLoading) return (
+    <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+      <div className="animate-pulse flex flex-col items-center gap-4">
+        <div className="w-12 h-12 bg-emerald-200 rounded-full"></div>
+        <p className="text-stone-400 font-bold">載入中...</p>
+      </div>
+    </div>
+  );
+
+  // Components (Nav/Modal)
+  const BottomNav = () => (
+    <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-white/80 backdrop-blur-xl border border-white/20 shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-3xl p-2 z-40 flex justify-around items-center">
+      {[
+        { id: 'company', icon: Briefcase, label: '公司' },
+        { id: 'daily', icon: Wallet, label: '日常' },
+        { id: 'calendar', icon: CalendarIcon, label: '行事曆' },
+        { id: 'todo', icon: CheckSquare, label: '待辦' },
+        { id: 'profile', icon: UserIcon, label: '我的' }
+      ].map(tab => (
+        <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`relative flex flex-col items-center py-2 px-4 rounded-2xl transition-all duration-300 ${activeTab === tab.id ? 'text-emerald-600 scale-110' : 'text-stone-400 hover:text-stone-600'}`}>
+          <tab.icon size={22} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
+          <span className="text-[10px] mt-1 font-bold">{tab.label}</span>
+          {activeTab === tab.id && <div className="absolute -bottom-1 w-1 h-1 bg-emerald-600 rounded-full"></div>}
+        </button>
+      ))}
+    </nav>
+  );
+
+  const ConfirmModal = () => !confirmModal.show ? null : (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onClick={() => setConfirmModal({show:false})}></div>
+      <Card className="w-full max-w-xs relative z-10 text-center">
+        <AlertTriangle className="mx-auto text-rose-500 mb-4" size={48} />
+        <h3 className="text-lg font-bold text-stone-800 mb-2">確定要刪除嗎？</h3>
+        <p className="text-stone-500 text-sm mb-6">此動作無法復原。</p>
+        <div className="flex gap-3">
+          <button onClick={() => setConfirmModal({show:false})} className="flex-1 py-3 font-bold text-stone-500 bg-stone-100 rounded-xl">取消</button>
+          <button onClick={handleDelete} className="flex-1 py-3 font-bold text-white bg-rose-500 rounded-xl shadow-lg shadow-rose-200">刪除</button>
+        </div>
+      </Card>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-[#FDF6E3] text-stone-700 font-sans selection:bg-emerald-200">
-       <style>{`@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap'); body { font-family: 'Microsoft JhengHei', 'Noto Sans TC', sans-serif; } .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; } .no-spinner { -moz-appearance: textfield; }`}</style>
-       <div className="max-w-md mx-auto min-h-screen relative shadow-2xl bg-stone-50">
-          <div className="h-10 w-full bg-stone-50"></div>
-          <main className="p-5">
-            {activeTab === 'calendar' && (
-              <CalendarView 
-                events={events}
-                onAddClick={() => openModal('event')}
-                onEditClick={triggerEdit}
-                onDeleteClick={triggerDelete}
-              />
-            )}
-            
+    <div className="min-h-screen bg-stone-50 text-stone-900 pb-10">
+       <div className="max-w-md mx-auto px-4 pt-6">
+          <main className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             {activeTab === 'company' && (
               <CompanyView 
                 companyTx={companyTx}
@@ -218,22 +188,28 @@ export default function App() {
                 onAddClick={() => openModal(companySubTab)}
                 onEditClick={triggerEdit}
                 onDeleteClick={triggerDelete}
-                setActiveTab={setActiveTab} // 傳遞切換頁面的函式
                 db={db}
                 appId={appId}
+              />
+            )}
+
+            {activeTab === 'calendar' && (
+              <CalendarView 
+                events={events}
+                onAddClick={() => openModal('event')}
+                onEditClick={triggerEdit}
+                onDeleteClick={triggerDelete}
               />
             )}
 
             {activeTab === 'daily' && (
               <DailyView 
                 dailyTx={dailyTx}
-                companyTx={companyTx}
                 selectedMonth={selectedMonth}
                 setSelectedMonth={setSelectedMonth}
                 showDailyChart={showDailyChart}
                 setShowDailyChart={setShowDailyChart}
                 onAddClick={() => openModal('daily')}
-                onAddFixedClick={() => openModal('daily_fixed')}
                 onEditClick={triggerEdit}
                 onDeleteClick={triggerDelete}
               />
@@ -250,21 +226,11 @@ export default function App() {
                 onDeleteClick={triggerDelete}
               />
             )}
-            
-            {/* 🆕 年度報表頁面 */}
-            {activeTab === 'annual_report' && (
-              <AnnualReportView
-                companyTx={companyTx}
-                currentYear={selectedMonth.split('-')[0]}
-                setActiveTab={setActiveTab}
-              />
-            )}
 
-	    {activeTab === 'profile' && (
-             <ProfileView user={user} />
+            {activeTab === 'profile' && (
+              <ProfileView user={user} />
             )}
-
-	</main>
+          </main>
           
           <ModalForm 
             isOpen={isModalOpen}
@@ -275,7 +241,6 @@ export default function App() {
             appId={appId}
           />
           <ConfirmModal />
-          {/* 導航列 */}
           <BottomNav />
        </div>
     </div>
